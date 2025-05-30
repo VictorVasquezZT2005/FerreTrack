@@ -1,0 +1,114 @@
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+@layer base {
+  :root {
+    --background: 0 0% 100%; /* Pure white */
+    --foreground: 0 0% 9%; /* Very Dark Grey / Near Black - Kept */
+
+    --card: 0 0% 100%; /* White - Kept */
+    --card-foreground: 0 0% 9%; /* Kept */
+
+    --popover: 0 0% 100%; /* White - Kept */
+    --popover-foreground: 0 0% 9%; /* Kept */
+
+    /* --- Swapped Primary and Secondary --- */
+    --primary: 123 38% 12%; /* #132A14 Dark Green (was Secondary) */
+    --primary-foreground: 0 0% 95%; /* Light Grey/White for contrast (was Secondary Foreground) */
+
+    --secondary: 220 3% 75%; /* #BDBEC0 Light Grey (was Primary) */
+    --secondary-foreground: 0 0% 9%; /* Dark text for contrast (was Primary Foreground) */
+    /* --- End Swap --- */
+
+    --muted: 0 0% 96%; /* Slightly Lighter Grey Muted */
+    --muted-foreground: 0 0% 50%; /* Slightly Lighter Medium Grey */
+
+    --accent: 51 73% 39%; /* #AD991B Gold/Yellow (Remains Accent) */
+    --accent-foreground: 0 0% 9%; /* Dark text for contrast */
+
+    --destructive: 0 84.2% 60.2%; /* Kept */
+    --destructive-foreground: 0 0% 98%; /* Kept */
+
+    --border: 0 0% 93%; /* Lighter Grey Border */
+    --input: 0 0% 92%; /* Kept - Slightly lighter input background */
+    --ring: 51 73% 39%; /* Matches accent color (Gold/Yellow) */
+
+    --chart-1: 120 60% 50%;
+    --chart-2: 30 90% 55%;
+    --chart-3: 0 0% 40%;
+    --chart-4: 45 80% 60%;
+    --chart-5: 90 50% 45%;
+    --radius: 0.75rem; /* iOS feel */
+
+    /* Sidebar colors updated to reflect new primary */
+    --sidebar-background: 0 0% 98%; /* Lightened from 95% */
+    --sidebar-foreground: 0 0% 9%;
+    --sidebar-primary: 123 38% 12%; /* Matches new primary (Dark Green) */
+    --sidebar-primary-foreground: 0 0% 95%; /* Matches new primary-foreground */
+    --sidebar-accent: 51 73% 39%; /* Matches accent */
+    --sidebar-accent-foreground: 0 0% 9%;
+    --sidebar-border: 0 0% 90%; /* Lightened from 85% */
+    --sidebar-ring: 51 73% 39%; /* Matches accent */
+  }
+
+  .dark {
+    --background: 0 0% 4%; /* Very Dark Grey / Near Black */
+    --foreground: 0 0% 96%; /* Very Light Grey / Almost White */
+
+    --card: 0 0% 10%; /* Darker Card */
+    --card-foreground: 0 0% 96%;
+
+    --popover: 0 0% 8%; /* Even Darker Popover */
+    --popover-foreground: 0 0% 96%;
+
+    /* Dark theme uses different primary/accent as per previous design - keeping this distinction */
+    --primary: 255 37% 60%; /* Slightly lighter/brighter Purple for dark mode */
+    --primary-foreground: 0 0% 100%; /* White */
+
+    --secondary: 0 0% 12%; /* Very Dark Grey for secondary background in dark mode */
+    --secondary-foreground: 0 0% 90%; /* Light Grey for contrast */
+
+    --muted: 0 0% 15%; /* Dark Muted */
+    --muted-foreground: 0 0% 60%; /* Lighter Medium Grey */
+
+    --accent: 209 78% 70%; /* Slightly adjusted Light Blue for dark mode */
+    --accent-foreground: 0 0% 100%; /* White text for contrast with dark mode accent */
+
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 0 0% 15%; /* Darker Border */
+    --input: 0 0% 12%; /* Dark Input Background */
+    --ring: 209 78% 70%; /* Matches dark mode accent */
+
+    --chart-1: 120 50% 55%;
+    --chart-2: 30 80% 60%;
+    --chart-3: 0 0% 50%;
+    --chart-4: 45 70% 65%;
+    --chart-5: 90 40% 50%;
+
+    --sidebar-background: 0 0% 8%;  /* Darker sidebar */
+    --sidebar-foreground: 0 0% 96%;
+    --sidebar-primary: 255 37% 60%; /* Purple */
+    --sidebar-primary-foreground: 0 0% 100%; /* White */
+    --sidebar-accent: 209 78% 70%; /* Light Blue */
+    --sidebar-accent-foreground: 0 0% 100%; /* White text */
+    --sidebar-border: 0 0% 12%;
+    --sidebar-ring: 209 78% 70%; /* Light Blue */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
