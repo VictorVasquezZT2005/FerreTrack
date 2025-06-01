@@ -28,17 +28,19 @@ import type { Supplier, SupplierFormValues } from '@/lib/types';
 import { SupplierClientSchema } from '@/lib/form-schemas';
 import { Loader2 } from 'lucide-react';
 import React, { useEffect, useTransition } from 'react';
+import { useAuth } from '@/contexts/auth-context'; // Added useAuth
 
-const formSchema = SupplierClientSchema.omit({id: true}); // ID is handled separately
+const formSchema = SupplierClientSchema.omit({id: true}); 
 
 interface EditSupplierDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  supplier: Supplier; // Supplier data to pre-fill
+  supplier: Supplier; 
 }
 
 export function EditSupplierDialog({ open, onOpenChange, supplier }: EditSupplierDialogProps) {
   const { toast } = useToast();
+  const { user } = useAuth(); // Get user for actorUserId
   const [isPending, startTransition] = useTransition();
 
   const form = useForm<SupplierFormValues>({
@@ -66,7 +68,11 @@ export function EditSupplierDialog({ open, onOpenChange, supplier }: EditSupplie
 
   async function onSubmit(values: SupplierFormValues) {
     startTransition(async () => {
-      const result = await updateSupplierAction(supplier.id, values);
+      if (!user?.id) {
+        toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario para la bitácora.", variant: "destructive" });
+        return;
+      }
+      const result = await updateSupplierAction(supplier.id, values, user.id);
 
       if (result.success && result.supplier) {
         toast({

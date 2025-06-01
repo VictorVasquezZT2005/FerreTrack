@@ -26,7 +26,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { EditCustomerDialog } from './edit-customer-dialog'; // Import EditCustomerDialog
+import { EditCustomerDialog } from './edit-customer-dialog'; 
+import { useAuth } from '@/contexts/auth-context'; // Added useAuth
 
 interface CustomersTableProps {
   initialCustomers: Customer[];
@@ -37,11 +38,12 @@ interface CustomersTableProps {
 
 export function CustomersTable({ initialCustomers, userRole, onCustomerUpdated, onCustomerDeleted }: CustomersTableProps) {
   const { toast } = useToast();
+  const { user: actorUser } = useAuth(); // Get user for actorUserId
   const [customers, setCustomers] = useState<Customer[]>(initialCustomers);
   const [isDeleting, setIsDeleting] = useState<Record<string, boolean>>({});
   const [isPending, startTransition] = useTransition();
   
-  const isAdmin = userRole === 'admin'; // Only admin can edit or delete
+  const isAdmin = userRole === 'admin'; 
 
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedCustomerForEdit, setSelectedCustomerForEdit] = useState<Customer | null>(null);
@@ -51,17 +53,21 @@ export function CustomersTable({ initialCustomers, userRole, onCustomerUpdated, 
   }, [initialCustomers]);
 
   const handleDeleteCustomer = async (customerId: string, customerName: string) => {
-    if (!isAdmin) { // Double check permission
+    if (!isAdmin) { 
       toast({ title: 'Acción no permitida', description: 'No tienes permisos para eliminar clientes.', variant: 'destructive' });
+      return;
+    }
+    if (!actorUser?.id) {
+      toast({ title: 'Error de autenticación', description: 'No se pudo identificar al usuario para la bitácora.', variant: 'destructive' });
       return;
     }
     setIsDeleting(prev => ({ ...prev, [customerId]: true }));
     startTransition(async () => {
-      const result = await deleteCustomerAction(customerId);
+      const result = await deleteCustomerAction(customerId, customerName, actorUser.id);
       setIsDeleting(prev => ({ ...prev, [customerId]: false }));
 
       if (result.success) {
-        onCustomerDeleted(customerId); // Update parent state
+        onCustomerDeleted(customerId); 
         toast({
           title: 'Cliente Eliminado',
           description: `El cliente "${customerName}" ha sido eliminado correctamente.`,
@@ -77,7 +83,7 @@ export function CustomersTable({ initialCustomers, userRole, onCustomerUpdated, 
   };
 
   const handleOpenEditDialog = (customerToEdit: Customer) => {
-    if (!isAdmin) return; // Prevent opening if not admin
+    if (!isAdmin) return; 
     setSelectedCustomerForEdit(customerToEdit);
     setIsEditDialogOpen(true);
   };
@@ -172,7 +178,7 @@ export function CustomersTable({ initialCustomers, userRole, onCustomerUpdated, 
           onOpenChange={setIsEditDialogOpen}
           customer={selectedCustomerForEdit}
           onCustomerUpdated={(updatedCustomer) => {
-            onCustomerUpdated(updatedCustomer); // Update parent state
+            onCustomerUpdated(updatedCustomer); 
             setIsEditDialogOpen(false);
           }}
         />

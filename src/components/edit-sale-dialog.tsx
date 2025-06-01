@@ -22,7 +22,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
-import { Label } from '@/components/ui/label'; // Added this import
+import { Label } from '@/components/ui/label'; 
 import {
   Select,
   SelectContent,
@@ -36,6 +36,7 @@ import { updateSaleAction, fetchCustomersAction } from '@/lib/actions';
 import type { Sale, Customer, EditSaleFormValues, PaymentMethod } from '@/lib/types';
 import { EditSaleClientSchema } from '@/lib/form-schemas';
 import { Loader2, UserCircleIcon, CreditCard, Landmark } from 'lucide-react';
+import { useAuth } from '@/contexts/auth-context'; // Added useAuth
 
 const NO_CUSTOMER_SELECTED_VALUE = "__NO_CUSTOMER__";
 
@@ -48,6 +49,7 @@ interface EditSaleDialogProps {
 
 export function EditSaleDialog({ open, onOpenChange, sale, onSaleUpdated }: EditSaleDialogProps) {
   const { toast } = useToast();
+  const { user: actorUser } = useAuth(); // Get user for actorUserId
   const [isPending, startTransition] = useTransition();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [isLoadingCustomers, setIsLoadingCustomers] = useState(true);
@@ -86,7 +88,11 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaleUpdated }: Edit
 
   async function onSubmit(values: EditSaleFormValues) {
     startTransition(async () => {
-      const result = await updateSaleAction(values);
+      if (!actorUser?.id) {
+        toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario para la bitácora.", variant: "destructive" });
+        return;
+      }
+      const result = await updateSaleAction(values, actorUser.id);
       if (result.success && result.sale) {
         onSaleUpdated(result.sale);
         toast({
@@ -115,7 +121,6 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaleUpdated }: Edit
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 py-2">
-            {/* Customer Selection */}
             <FormField
               control={form.control}
               name="customerId"
@@ -149,7 +154,6 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaleUpdated }: Edit
               )}
             />
 
-            {/* Payment Method */}
             <FormField
               control={form.control}
               name="paymentMethod"

@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { deleteSupplierAction } from '@/lib/actions';
 import React, { useState, useTransition } from 'react';
-import { Loader2, Trash2, Edit3 } from 'lucide-react'; // Added Edit3
+import { Loader2, Trash2, Edit3 } from 'lucide-react'; 
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,7 +27,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { EditSupplierDialog } from './edit-supplier-dialog'; // Import EditSupplierDialog
+import { EditSupplierDialog } from './edit-supplier-dialog'; 
+import { useAuth } from '@/contexts/auth-context';
 
 interface SuppliersTableProps {
   suppliers: Supplier[];
@@ -36,10 +37,11 @@ interface SuppliersTableProps {
 
 export function SuppliersTable({ suppliers: initialSuppliers, userRole }: SuppliersTableProps) {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [suppliers, setSuppliers] = useState<Supplier[]>(initialSuppliers);
   const [isDeleting, setIsDeleting] = useState<Record<string, boolean>>({});
   const [isPending, startTransition] = useTransition();
-  const isAdmin = userRole === 'admin';
+  const canManageSuppliers = userRole === 'admin' || userRole === 'inventory_manager';
 
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedSupplierForEdit, setSelectedSupplierForEdit] = useState<Supplier | null>(null);
@@ -49,13 +51,17 @@ export function SuppliersTable({ suppliers: initialSuppliers, userRole }: Suppli
   }, [initialSuppliers]);
 
   const handleDeleteSupplier = async (supplierId: string, supplierName: string) => {
-    if (!isAdmin) {
+    if (!canManageSuppliers) {
       toast({ title: 'Acción no permitida', description: 'No tienes permisos para eliminar proveedores.', variant: 'destructive' });
+      return;
+    }
+    if (!user?.id) {
+      toast({ title: 'Error de autenticación', description: 'No se pudo identificar al usuario para la bitácora.', variant: 'destructive' });
       return;
     }
     setIsDeleting(prev => ({ ...prev, [supplierId]: true }));
     startTransition(async () => {
-      const result = await deleteSupplierAction(supplierId);
+      const result = await deleteSupplierAction(supplierId, supplierName, user.id);
       setIsDeleting(prev => ({ ...prev, [supplierId]: false }));
 
       if (result.success) {
@@ -75,6 +81,7 @@ export function SuppliersTable({ suppliers: initialSuppliers, userRole }: Suppli
   };
 
   const handleOpenEditDialog = (supplierToEdit: Supplier) => {
+    if (!canManageSuppliers) return;
     setSelectedSupplierForEdit(supplierToEdit);
     setIsEditDialogOpen(true);
   };
@@ -97,7 +104,7 @@ export function SuppliersTable({ suppliers: initialSuppliers, userRole }: Suppli
                 <TableHead>Contacto</TableHead>
                 <TableHead>Productos Suministrados</TableHead>
                 <TableHead>Últ. Actualización</TableHead>
-                {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
+                {canManageSuppliers && <TableHead className="text-right">Acciones</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -117,7 +124,7 @@ export function SuppliersTable({ suppliers: initialSuppliers, userRole }: Suppli
                     ) : 'N/A'}
                   </TableCell>
                   <TableCell>{new Date(supplier.lastUpdated).toLocaleDateString()}</TableCell>
-                  {isAdmin && (
+                  {canManageSuppliers && (
                     <TableCell className="text-right space-x-1">
                       <Button
                         size="icon"
@@ -169,7 +176,7 @@ export function SuppliersTable({ suppliers: initialSuppliers, userRole }: Suppli
           </Table>
         </div>
       </div>
-      {selectedSupplierForEdit && isAdmin && (
+      {selectedSupplierForEdit && canManageSuppliers && (
         <EditSupplierDialog
           open={isEditDialogOpen}
           onOpenChange={setIsEditDialogOpen}

@@ -45,7 +45,7 @@ export const UserFormClientSchema = z.object({
   id: z.string().optional(), // Present when editing
   nombre: z.string().min(2, { message: 'El nombre debe tener al menos 2 caracteres.' }),
   email: z.string().email({ message: 'Por favor, introduce un email válido.' }),
-  rol: z.enum(['admin', 'empleado'], { required_error: 'Debes seleccionar un rol.' }),
+  rol: z.enum(['admin', 'empleado', 'inventory_manager'], { required_error: 'Debes seleccionar un rol.' }),
   password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres.").optional().or(z.literal('')),
   confirmPassword: z.string().optional().or(z.literal('')),
 })
@@ -96,4 +96,3 @@ export const EditSaleClientSchema = z.object({
   customerId: z.string().optional(), // Can be empty for "Consumidor Final"
   paymentMethod: z.enum(['efectivo', 'tarjeta'], { required_error: "Debe seleccionar un método de pago." }),
 });
-

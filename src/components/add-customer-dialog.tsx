@@ -22,24 +22,26 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea'; // For address
+import { Textarea } from '@/components/ui/textarea'; 
 import { useToast } from '@/hooks/use-toast';
 import { addNewCustomerAction } from '@/lib/actions';
 import { CustomerClientSchema } from '@/lib/form-schemas';
 import type { CustomerFormValues, Customer } from '@/lib/types';
 import { Loader2 } from 'lucide-react';
 import React, { useState, useTransition } from 'react';
+import { useAuth } from '@/contexts/auth-context'; // Added useAuth
 
 interface AddCustomerDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCustomerAdded?: (newCustomer: Customer) => void; // Callback after successful addition
+  onCustomerAdded?: (newCustomer: Customer) => void; 
 }
 
 const formSchema = CustomerClientSchema.omit({ id: true });
 
 export function AddCustomerDialog({ open, onOpenChange, onCustomerAdded }: AddCustomerDialogProps) {
   const { toast } = useToast();
+  const { user } = useAuth(); // Get user for actorUserId
   const [isPending, startTransition] = useTransition();
 
   const form = useForm<Omit<CustomerFormValues, 'id'>>({
@@ -61,14 +63,18 @@ export function AddCustomerDialog({ open, onOpenChange, onCustomerAdded }: AddCu
 
   async function onSubmit(values: Omit<CustomerFormValues, 'id'>) {
     startTransition(async () => {
-      const result = await addNewCustomerAction(values);
+      if (!user?.id) {
+        toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario para la bitácora.", variant: "destructive" });
+        return;
+      }
+      const result = await addNewCustomerAction(values, user.id);
       if (result.success && result.customer) {
         toast({
           title: 'Cliente Añadido',
           description: `El cliente "${result.customer.name}" se ha añadido correctamente.`,
         });
         onCustomerAdded?.(result.customer);
-        onOpenChange(false); // Close dialog
+        onOpenChange(false); 
       } else {
         toast({
           title: 'Error al Añadir Cliente',

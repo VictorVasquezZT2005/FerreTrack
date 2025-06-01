@@ -34,6 +34,7 @@ import { EditInventoryItemClientSchema } from '@/lib/form-schemas';
 import type { EditInventoryItemFormValues, InventoryItem, Supplier } from '@/lib/types';
 import { Loader2 } from 'lucide-react';
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '@/contexts/auth-context'; // Added useAuth
 
 const formSchema = EditInventoryItemClientSchema;
 const NO_SUPPLIER_OPTION_VALUE = "__#NONE#_SUPPLIER__";
@@ -47,6 +48,7 @@ interface EditInventoryItemDialogProps {
 
 export function EditInventoryItemDialog({ open, onOpenChange, item, onItemUpdated }: EditInventoryItemDialogProps) {
   const { toast } = useToast();
+  const { user } = useAuth(); // Get user for actorUserId
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [suppliersList, setSuppliersList] = useState<Supplier[]>([]);
   const [isLoadingSuppliers, setIsLoadingSuppliers] = useState(false);
@@ -97,8 +99,12 @@ export function EditInventoryItemDialog({ open, onOpenChange, item, onItemUpdate
 
   async function onSubmit(values: EditInventoryItemFormValues) {
     setIsSubmitting(true);
-    // Ensure ID is included, though it's part of 'values' from form.getValues() implicitly
-    const result = await updateInventoryItemDetailsAction(item.id, values);
+    if (!user?.id) {
+      toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario para la bitácora.", variant: "destructive" });
+      setIsSubmitting(false);
+      return;
+    }
+    const result = await updateInventoryItemDetailsAction(item.id, values, user.id);
     setIsSubmitting(false);
 
     if (result.success && result.item) {
@@ -106,13 +112,12 @@ export function EditInventoryItemDialog({ open, onOpenChange, item, onItemUpdate
         title: 'Artículo Actualizado',
         description: `Los detalles del artículo "${result.item.name}" se han actualizado correctamente.`,
       });
-      onItemUpdated(result.item); // Callback to update parent state
+      onItemUpdated(result.item); 
       onOpenChange(false);
     } else {
       let errorMessage = result.error || "Ocurrió un error desconocido.";
       if (result.fieldErrors) {
         errorMessage = "Por favor, corrige los errores en el formulario.";
-        // Optionally set form errors manually if needed
       }
       toast({
         title: 'Error al Actualizar Artículo',

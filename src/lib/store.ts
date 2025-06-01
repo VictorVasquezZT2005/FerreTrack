@@ -1,7 +1,7 @@
 
 import { MongoClient, ObjectId, type Collection, type Db, ServerApiVersion } from 'mongodb';
 import { getDb } from './mongodb';
-import type { InventoryItem, NewInventoryItemFormValues, UpdateStockFormValues, Supplier, User, LoginCredentials, EditInventoryItemFormValues, Customer, CustomerFormValues, Sale, SaleItem, PaymentMethod } from './types';
+import type { AuditLogEntry, InventoryItem, NewInventoryItemFormValues, UpdateStockFormValues, Supplier, User, LoginCredentials, EditInventoryItemFormValues, Customer, CustomerFormValues, Sale, SaleItem, PaymentMethod } from './types';
 import { getCategoryNameByCodePrefix } from '@/lib/category-mapping';
 
 // Define collection names
@@ -10,12 +10,38 @@ const SUPPLIERS_COLLECTION = 'suppliers';
 const USERS_COLLECTION = 'users';
 const CUSTOMERS_COLLECTION = 'customers';
 const SALES_COLLECTION = 'sales'; 
+const AUDIT_LOG_COLLECTION = 'auditLogs'; // Added audit log collection
 
 // Helper function to convert MongoDB document to application type
 function mapMongoId<T extends { _id?: ObjectId }>(doc: T): Omit<T, '_id'> & { id: string } {
   const { _id, ...rest } = doc;
   return { ...rest, id: _id!.toString() };
 }
+
+// --- Audit Log Store Functions ---
+export async function addAuditLogInternal(logEntry: Omit<AuditLogEntry, 'id'>): Promise<void> {
+  const db = await getDb();
+  const collection = db.collection(AUDIT_LOG_COLLECTION);
+  try {
+    const result = await collection.insertOne(logEntry as any);
+    if (result.insertedId) {
+      console.log(`[Audit Log Store] Entry added successfully for action: ${logEntry.actionType} by ${logEntry.actorName}. DB ID: ${result.insertedId}`);
+    } else {
+      console.warn(`[Audit Log Store] Entry for action ${logEntry.actionType} by ${logEntry.actorName} did NOT get an insertedId from MongoDB.`);
+    }
+  } catch (error) {
+    console.error(`[Audit Log Store] Failed to add entry to database for action ${logEntry.actionType} by ${logEntry.actorName}:`, error);
+    // Decide if you want to throw or just log. For audit, probably just log and don't break the main operation.
+  }
+}
+
+export async function getAuditLogs(): Promise<AuditLogEntry[]> {
+  const db = await getDb();
+  const collection = db.collection<Omit<AuditLogEntry, 'id'>>(AUDIT_LOG_COLLECTION);
+  const logsFromDb = await collection.find().sort({ timestamp: -1 }).limit(100).toArray(); // Added limit for performance
+  return logsFromDb.map(log => mapMongoId(log as Omit<AuditLogEntry, 'id'> & { _id: ObjectId }));
+}
+
 
 // Inventory Functions
 export async function getInventory(
@@ -269,7 +295,10 @@ export async function getUsers(): Promise<Omit<User, 'password'>[]> {
 }
 
 export async function getUserById(userId: string): Promise<Omit<User, 'password'> | null> {
-  if (!ObjectId.isValid(userId)) return null;
+  if (!ObjectId.isValid(userId)) {
+    console.warn(`[getUserById] Invalid userId format: ${userId}`);
+    return null;
+  }
   const db = await getDb();
   const collection = db.collection<User>(USERS_COLLECTION);
   const userDoc = await collection.findOne({ _id: new ObjectId(userId) });
@@ -624,28 +653,24 @@ export async function updateSaleDetails(
   }
   
   // Handle customerId and customerName carefully
-  if (data.customerId === undefined) { // If explicitly set to "Consumidor Final" (represented by undefined customerId in form)
+  if (data.customerId === undefined && data.hasOwnProperty('customerId')) { // If customerId is explicitly passed as undefined (meaning "Consumidor Final")
     updatePayload.customerId = undefined;
     updatePayload.customerName = undefined;
   } else if (data.customerId) { // If a specific customer is selected
     updatePayload.customerId = data.customerId;
-    // customerName should be passed from the action after fetching it
-    if (data.customerName) {
+    if (data.customerName) { // customerName should be passed from the action after fetching it
          updatePayload.customerName = data.customerName;
-    } else {
-        // If for some reason customerName is not passed with a valid customerId,
-        // we might clear it or leave it (current behavior in action is to fetch it)
-        // For safety here, if customerId is set but customerName is not, we can fetch it again
-        // or rely on the action to have provided it.
-        // Let's assume the action provides customerName if customerId is valid.
     }
   }
-  // If data.customerId is null or not present, we don't modify customer fields unless explicitly told.
+  // If data.customerId is not in data, customer fields are not changed.
 
-  if (Object.keys(updatePayload).length <= 1 && !data.paymentMethod && data.customerId === undefined && data.customerName === undefined) { // only lastUpdated
+  // Check if only lastUpdated is being set (meaning no actual data changes)
+  const numKeysToUpdate = Object.keys(updatePayload).length;
+  if (numKeysToUpdate === 1 && updatePayload.lastUpdated) {
      const currentSale = await salesCollection.findOne({_id: new ObjectId(saleId)});
      return currentSale ? mapMongoId(currentSale) : null;
   }
+
 
   const result = await salesCollection.findOneAndUpdate(
     { _id: new ObjectId(saleId) },
@@ -655,3 +680,4 @@ export async function updateSaleDetails(
 
   return result ? mapMongoId(result) : null;
 }
+

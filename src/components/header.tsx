@@ -18,6 +18,14 @@ import { ThemeToggleButton } from './theme-toggle-button';
 export default function AppHeader() {
   const { user, logout, isLoading } = useAuth();
 
+  const canViewCustomers = user?.rol === 'admin' || user?.rol === 'empleado';
+  const canViewSales = user?.rol === 'admin' || user?.rol === 'empleado';
+  const canViewSuppliers = user?.rol === 'admin' || user?.rol === 'empleado' || user?.rol === 'inventory_manager';
+  const canViewSystemUsers = user?.rol === 'admin';
+  const canViewAuditLog = user?.rol === 'admin';
+  const canViewInventory = user?.rol === 'admin' || user?.rol === 'empleado' || user?.rol === 'inventory_manager';
+
+
   return (
     <header className="bg-card border-b border-border shadow-sm sticky top-0 z-40">
       <div className="container mx-auto px-4 py-3 flex items-center justify-between">
@@ -34,17 +42,21 @@ export default function AppHeader() {
                     <Link href="/"><LayoutDashboard className="mr-1 h-4 w-4" /> Dashboard</Link>
                   </span>
                 </Button>
-                <Button variant="ghost" asChild className="text-sm">
-                  <span>
-                    <Link href="/inventory"><Package className="mr-1 h-4 w-4" /> Inventario</Link>
-                  </span>
-                </Button>
-                 <Button variant="ghost" asChild className="text-sm">
-                  <span>
-                    <Link href="/customers"><Users className="mr-1 h-4 w-4" /> Clientes</Link>
-                  </span>
-                </Button>
-                {(user.rol === 'admin' || user.rol === 'empleado') && (
+                {canViewInventory && (
+                  <Button variant="ghost" asChild className="text-sm">
+                    <span>
+                      <Link href="/inventory"><Package className="mr-1 h-4 w-4" /> Inventario</Link>
+                    </span>
+                  </Button>
+                )}
+                 {canViewCustomers && (
+                  <Button variant="ghost" asChild className="text-sm">
+                    <span>
+                      <Link href="/customers"><Users className="mr-1 h-4 w-4" /> Clientes</Link>
+                    </span>
+                  </Button>
+                )}
+                {canViewSales && (
                   <>
                     <Button variant="ghost" asChild className="text-sm">
                       <span>
@@ -53,17 +65,24 @@ export default function AppHeader() {
                     </Button>
                   </>
                 )}
-                {(user.rol === 'admin' || user.rol === 'empleado') && (
+                {canViewSuppliers && (
                   <Button variant="ghost" asChild className="text-sm">
                     <span>
                       <Link href="/suppliers"><Truck className="mr-1 h-4 w-4" /> Proveedores</Link>
                     </span>
                   </Button>
                 )}
-                {user.rol === 'admin' && (
+                {canViewSystemUsers && (
                   <Button variant="ghost" asChild className="text-sm">
                     <span>
                       <Link href="/users"><Users className="mr-1 h-4 w-4" /> Usuarios</Link>
+                    </span>
+                  </Button>
+                )}
+                {canViewAuditLog && (
+                  <Button variant="ghost" asChild className="text-sm">
+                    <span>
+                      <Link href="/audit-log"><History className="mr-1 h-4 w-4" /> Bitácora</Link>
                     </span>
                   </Button>
                 )}
@@ -97,27 +116,36 @@ export default function AppHeader() {
                     <DropdownMenuItem asChild className="cursor-pointer">
                         <span><Link href="/"><LayoutDashboard className="mr-2 h-4 w-4" />Dashboard</Link></span>
                     </DropdownMenuItem>
-                    <DropdownMenuItem asChild className="cursor-pointer">
-                        <span><Link href="/inventory"><Package className="mr-2 h-4 w-4" />Inventario</Link></span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem asChild className="cursor-pointer">
-                        <span><Link href="/customers"><Users className="mr-2 h-4 w-4" />Clientes</Link></span>
-                    </DropdownMenuItem>
-                    {(user.rol === 'admin' || user.rol === 'empleado') && (
+                    {canViewInventory && (
+                      <DropdownMenuItem asChild className="cursor-pointer">
+                          <span><Link href="/inventory"><Package className="mr-2 h-4 w-4" />Inventario</Link></span>
+                      </DropdownMenuItem>
+                    )}
+                    {canViewCustomers && (
+                      <DropdownMenuItem asChild className="cursor-pointer">
+                          <span><Link href="/customers"><Users className="mr-2 h-4 w-4" />Clientes</Link></span>
+                      </DropdownMenuItem>
+                    )}
+                    {canViewSales && (
                       <>
                          <DropdownMenuItem asChild className="cursor-pointer">
                             <span><Link href="/sales"><History className="mr-2 h-4 w-4" />Ventas</Link></span>
                         </DropdownMenuItem>
                       </>
                     )}
-                     {(user.rol === 'admin' || user.rol === 'empleado') && (
+                     {canViewSuppliers && (
                         <DropdownMenuItem asChild className="cursor-pointer">
                            <span><Link href="/suppliers"><Truck className="mr-2 h-4 w-4" />Proveedores</Link></span>
                         </DropdownMenuItem>
                      )}
-                    {user.rol === 'admin' && (
+                    {canViewSystemUsers && (
                          <DropdownMenuItem asChild className="cursor-pointer">
                             <span><Link href="/users"><Users className="mr-2 h-4 w-4" />Usuarios</Link></span>
+                        </DropdownMenuItem>
+                    )}
+                    {canViewAuditLog && (
+                         <DropdownMenuItem asChild className="cursor-pointer">
+                            <span><Link href="/audit-log"><History className="mr-2 h-4 w-4" />Bitácora</Link></span>
                         </DropdownMenuItem>
                     )}
                     <DropdownMenuSeparator />

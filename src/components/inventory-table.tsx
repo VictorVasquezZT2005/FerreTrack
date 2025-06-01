@@ -13,9 +13,9 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
-import { deleteInventoryItemAction } from '@/lib/actions'; // Removed updateInventoryItemQuantityAction
+import { deleteInventoryItemAction } from '@/lib/actions'; 
 import React, { useState, useMemo, useEffect, useTransition } from 'react';
-import { ArrowUpDown, Save, XCircle, Loader2, Search, Trash2, AlertTriangle, FilePenLine } from 'lucide-react'; // Removed Edit3
+import { ArrowUpDown, Save, XCircle, Loader2, Search, Trash2, AlertTriangle, FilePenLine } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from '@/lib/utils';
 import { EditInventoryItemDialog } from './edit-inventory-item-dialog';
+import { useAuth } from '@/contexts/auth-context';
 
 interface InventoryTableProps {
   initialItems: InventoryItem[];
@@ -42,8 +43,8 @@ type SortConfig = {
 
 export function InventoryTable({ initialItems, userRole }: InventoryTableProps) {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [items, setItems] = useState<InventoryItem[]>(initialItems);
-  // Removed state for inline quantity editing: editingItemId, editingQuantity, isSaving
   const [filterQuery, setFilterQuery] = useState<string>('');
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'name', direction: 'ascending' });
   const [isDeleting, setIsDeleting] = useState<Record<string, boolean>>({});
@@ -52,24 +53,24 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedItemForEdit, setSelectedItemForEdit] = useState<InventoryItem | null>(null);
 
-  const isAdmin = userRole === 'admin';
-  // canEditQuantity is no longer needed here as inline editing is removed
-  // Quantity changes are now through "Registrar Entrada de Stock" or potentially EditInventoryItemDialog (if enhanced)
+  const canManageInventory = userRole === 'admin' || userRole === 'inventory_manager';
 
   useEffect(() => {
     setItems(initialItems);
   }, [initialItems]);
 
-  // Removed handleEditQuantity, handleCancelEdit, handleSaveQuantity functions
-
-  const handleDeleteItem = async (itemId: string, itemName: string) => {
-    if (!isAdmin) {
+  const handleDeleteItem = async (itemId: string, itemName: string, itemCode: string) => {
+    if (!canManageInventory) {
       toast({ title: 'Acción no permitida', description: 'No tienes permisos para eliminar artículos.', variant: 'destructive' });
+      return;
+    }
+    if (!user?.id) {
+      toast({ title: 'Error de autenticación', description: 'No se pudo identificar al usuario para la bitácora.', variant: 'destructive' });
       return;
     }
     setIsDeleting(prev => ({ ...prev, [itemId]: true }));
     startTransition(async () => {
-      const result = await deleteInventoryItemAction(itemId);
+      const result = await deleteInventoryItemAction(itemId, itemName, itemCode, user.id);
       setIsDeleting(prev => ({ ...prev, [itemId]: false }));
 
       if (result.success) {
@@ -89,6 +90,7 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
   };
 
   const handleOpenEditDialog = (itemToEdit: InventoryItem) => {
+    if (!canManageInventory) return;
     setSelectedItemForEdit(itemToEdit);
     setIsEditDialogOpen(true);
   };
@@ -188,7 +190,7 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
                   </div>
                 </TableHead>
               ))}
-              {isAdmin && <TableHead>Acciones</TableHead>}
+              {canManageInventory && <TableHead>Acciones</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -213,7 +215,6 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
                     <TableCell className="font-mono text-xs">{item.code}</TableCell>
                     <TableCell className="font-medium">{item.name}</TableCell>
                     <TableCell className={quantityCellClassName}>
-                      {/* Removed inline quantity input */}
                       <div className="flex items-center gap-1">
                          {isBelowMinStock && <AlertTriangle className={cn("h-4 w-4", isOutOfStock ? "text-red-500" : "text-amber-500")} />}
                          {item.quantity}
@@ -229,24 +230,23 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
                     <TableCell>{item.supplier || 'N/A'}</TableCell>
                     <TableCell>{item.unitPrice !== undefined ? `$${item.unitPrice.toFixed(2)}` : 'N/A'}</TableCell>
                     <TableCell>{new Date(item.lastUpdated).toLocaleDateString()}</TableCell>
-                    {isAdmin && (
+                    {canManageInventory && (
                       <TableCell>
                         <div className="flex gap-1 items-center">
-                          {/* Removed inline edit save/cancel buttons and Edit3 button */}
-                          {isAdmin && (
+                          {canManageInventory && (
                             <Button
                               size="icon"
                               variant="ghost"
                               onClick={() => handleOpenEditDialog(item)}
                               className="h-7 w-7 text-muted-foreground hover:text-foreground"
                               aria-label="Editar artículo"
-                              title="Editar Artículo" // Changed title to be more generic
+                              title="Editar Artículo"
                               disabled={isPending || isDeleting[item.id]}
                             >
                               <FilePenLine className="h-4 w-4" />
                             </Button>
                           )}
-                          {isAdmin && (
+                          {canManageInventory && (
                             <AlertDialog>
                               <AlertDialogTrigger asChild>
                                 <Button
@@ -270,7 +270,7 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
                                 <AlertDialogFooter>
                                   <AlertDialogCancel disabled={isDeleting[item.id] || isPending}>Cancelar</AlertDialogCancel>
                                   <AlertDialogAction
-                                    onClick={() => handleDeleteItem(item.id, item.name)}
+                                    onClick={() => handleDeleteItem(item.id, item.name, item.code)}
                                     disabled={isDeleting[item.id] || isPending}
                                     className="bg-destructive hover:bg-destructive/90"
                                   >
@@ -289,7 +289,7 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
               })
             ) : (
               <TableRow>
-                  <TableCell colSpan={tableHeaders.length + (isAdmin ? 1 : 0)} className="h-24 text-center text-muted-foreground">
+                  <TableCell colSpan={tableHeaders.length + (canManageInventory ? 1 : 0)} className="h-24 text-center text-muted-foreground">
                     {filterQuery ? "Ningún artículo coincide con tus criterios de filtro." : "No hay artículos en el inventario."}
                   </TableCell>
                 </TableRow>
@@ -298,7 +298,7 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
         </Table>
       </div>
     </div>
-    {selectedItemForEdit && isAdmin && (
+    {selectedItemForEdit && canManageInventory && (
       <EditInventoryItemDialog
         open={isEditDialogOpen}
         onOpenChange={setIsEditDialogOpen}
@@ -312,10 +312,7 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
   );
 }
 
-// Helper function, assuming it's defined elsewhere or here if not already
-// This might be better placed in a utils file or category-mapping if not already
 function getCategoryNameByCodePrefix(prefix: string): string | undefined {
-    // Example mapping - this should come from your actual category-mapping.ts
     const CATEGORY_CODES: Record<string, string> = {
       '01': 'Herramientas',
       '02': 'Fontanería',

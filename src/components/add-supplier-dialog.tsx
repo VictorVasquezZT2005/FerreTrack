@@ -27,9 +27,10 @@ import { addNewSupplierAction } from '@/lib/actions';
 import type { SupplierFormValues } from '@/lib/types';
 import { Loader2 } from 'lucide-react';
 import { useState, useTransition } from 'react';
-import { SupplierClientSchema } from '@/lib/form-schemas'; // Import from form-schemas
+import { SupplierClientSchema } from '@/lib/form-schemas'; 
+import { useAuth } from '@/contexts/auth-context'; // Added useAuth
 
-const formSchema = SupplierClientSchema.omit({id: true}); // ID is not needed for new supplier
+const formSchema = SupplierClientSchema.omit({id: true}); 
 
 interface AddSupplierDialogProps {
   open: boolean;
@@ -38,6 +39,7 @@ interface AddSupplierDialogProps {
 
 export function AddSupplierDialog({ open, onOpenChange }: AddSupplierDialogProps) {
   const { toast } = useToast();
+  const { user } = useAuth(); // Get user for actorUserId
   const [isPending, startTransition] = useTransition();
 
   const form = useForm<SupplierFormValues>({
@@ -53,7 +55,11 @@ export function AddSupplierDialog({ open, onOpenChange }: AddSupplierDialogProps
 
   async function onSubmit(values: SupplierFormValues) {
     startTransition(async () => {
-      const result = await addNewSupplierAction(values);
+      if (!user?.id) {
+        toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario para la bitácora.", variant: "destructive" });
+        return;
+      }
+      const result = await addNewSupplierAction(values, user.id);
 
       if (result.success && result.supplier) {
         toast({
@@ -81,7 +87,7 @@ export function AddSupplierDialog({ open, onOpenChange }: AddSupplierDialogProps
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => {
-        if (!isOpen) form.reset(); // Reset form when dialog is closed
+        if (!isOpen) form.reset(); 
         onOpenChange(isOpen);
       }}>
       <DialogContent className="sm:max-w-[520px] bg-popover">

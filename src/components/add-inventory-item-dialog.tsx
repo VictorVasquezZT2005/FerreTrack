@@ -35,6 +35,7 @@ import type { NewInventoryItemFormValues, Supplier } from '@/lib/types';
 import { Loader2 } from 'lucide-react';
 import React, { useState, useEffect } from 'react';
 import { CATEGORY_CODES, getCategoryNameByCodePrefix } from '@/lib/category-mapping';
+import { useAuth } from '@/contexts/auth-context'; // Added useAuth
 
 const formSchema = NewInventoryItemClientSchema;
 
@@ -47,6 +48,7 @@ interface AddInventoryItemDialogProps {
 
 export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemDialogProps) {
   const { toast } = useToast();
+  const { user } = useAuth(); // Get user for actorUserId
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [suppliersList, setSuppliersList] = useState<Supplier[]>([]);
   const [isLoadingSuppliers, setIsLoadingSuppliers] = useState(false);
@@ -70,7 +72,6 @@ export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemD
 
   useEffect(() => {
     if (open) {
-      // Reset form to default values when dialog opens
       form.reset({
         categoryCodePrefix: '',
         shelfCodePrefix: '',
@@ -100,7 +101,7 @@ export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemD
       };
       loadSuppliers();
     }
-  }, [open, form, toast]); // form added to dependency array of useEffect for reset
+  }, [open, form, toast]);
 
   useEffect(() => {
     if (watchedCategoryCodePrefix) {
@@ -117,7 +118,12 @@ export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemD
 
   async function onSubmit(values: NewInventoryItemFormValues) {
     setIsSubmitting(true);
-    const result = await addNewInventoryItemAction(values);
+    if (!user?.id) {
+      toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario para la bitácora.", variant: "destructive" });
+      setIsSubmitting(false);
+      return;
+    }
+    const result = await addNewInventoryItemAction(values, user.id);
     setIsSubmitting(false);
 
     if (result.success && result.item) {
@@ -130,7 +136,6 @@ export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemD
       let errorMessage = result.error || "Ocurrió un error desconocido.";
       if (result.fieldErrors) {
         errorMessage = "Por favor, corrige los errores en el formulario.";
-        // Manually set form errors for specific fields if needed
         if (result.fieldErrors.categoryCodePrefix) {
           form.setError('categoryCodePrefix', { type: 'manual', message: result.fieldErrors.categoryCodePrefix.join(', ') });
         }
@@ -148,7 +153,7 @@ export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemD
   
   return (
     <Dialog open={open} onOpenChange={(isOpen) => {
-      if (!isOpen) { // Reset form when dialog is closed by any means
+      if (!isOpen) { 
         form.reset({
           categoryCodePrefix: '',
           shelfCodePrefix: '',
@@ -345,5 +350,3 @@ export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemD
     </Dialog>
   );
 }
-
-    

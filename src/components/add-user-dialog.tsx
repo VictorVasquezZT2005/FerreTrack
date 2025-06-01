@@ -34,6 +34,7 @@ import type { UserFormValues } from '@/lib/types';
 import { UserFormClientSchema } from '@/lib/form-schemas';
 import { Loader2 } from 'lucide-react';
 import { useState, useTransition } from 'react';
+import { useAuth } from '@/contexts/auth-context'; // Added useAuth
 
 const formSchema = UserFormClientSchema;
 
@@ -44,6 +45,7 @@ interface AddUserDialogProps {
 
 export function AddUserDialog({ open, onOpenChange }: AddUserDialogProps) {
   const { toast } = useToast();
+  const { user: actorUser } = useAuth(); // Get acting user for actorUserId
   const [isPending, startTransition] = useTransition();
 
   const form = useForm<UserFormValues>({
@@ -51,7 +53,7 @@ export function AddUserDialog({ open, onOpenChange }: AddUserDialogProps) {
     defaultValues: {
       nombre: '',
       email: '',
-      rol: 'empleado',
+      rol: 'empleado', // Default role
       password: '',
       confirmPassword: '',
     },
@@ -59,7 +61,11 @@ export function AddUserDialog({ open, onOpenChange }: AddUserDialogProps) {
 
   async function onSubmit(values: UserFormValues) {
     startTransition(async () => {
-      const result = await addNewUserAction(values);
+      if (!actorUser?.id) {
+        toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario que realiza la acción.", variant: "destructive" });
+        return;
+      }
+      const result = await addNewUserAction(values, actorUser.id);
 
       if (result.success && result.user) {
         toast({
@@ -87,7 +93,13 @@ export function AddUserDialog({ open, onOpenChange }: AddUserDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => {
-      if (!isOpen) form.reset(); // Reset form when dialog is closed
+      if (!isOpen) form.reset({ 
+        nombre: '', 
+        email: '', 
+        rol: 'empleado', 
+        password: '', 
+        confirmPassword: '' 
+      }); 
       onOpenChange(isOpen);
     }}>
       <DialogContent className="sm:max-w-md bg-popover">
@@ -140,6 +152,7 @@ export function AddUserDialog({ open, onOpenChange }: AddUserDialogProps) {
                     <SelectContent>
                       <SelectItem value="empleado">Empleado</SelectItem>
                       <SelectItem value="admin">Administrador</SelectItem>
+                      <SelectItem value="inventory_manager">Encargado de Inventario</SelectItem>
                     </SelectContent>
                   </Select>
                   <FormMessage />

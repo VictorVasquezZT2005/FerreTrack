@@ -13,18 +13,18 @@ interface SupplierActionsProps {
 
 export function SupplierActions({ userRole }: SupplierActionsProps) {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const isAdmin = userRole === 'admin';
+  const canManageSuppliers = userRole === 'admin' || userRole === 'inventory_manager';
 
   return (
     <>
       <div className="mb-6">
-        {isAdmin && (
+        {canManageSuppliers && (
           <Button onClick={() => setIsAddDialogOpen(true)}>
             <PlusCircle className="mr-2 h-4 w-4" /> Añadir Proveedor
           </Button>
         )}
       </div>
-      {isAdmin && <AddSupplierDialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen} />}
+      {canManageSuppliers && <AddSupplierDialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen} />}
     </>
   );
 }

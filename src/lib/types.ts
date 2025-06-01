@@ -62,7 +62,7 @@ export type User = {
   id: string;
   nombre: string;
   email: string;
-  rol: 'admin' | 'empleado';
+  rol: 'admin' | 'empleado' | 'inventory_manager';
   password?: string; 
   lastUpdated: string;
 };
@@ -71,7 +71,7 @@ export type UserFormValues = {
   id?: string; 
   nombre: string;
   email: string;
-  rol: 'admin' | 'empleado';
+  rol: 'admin' | 'empleado' | 'inventory_manager';
   password?: string;
   confirmPassword?: string;
 };
@@ -150,3 +150,13 @@ export type EditSaleFormValues = {
   paymentMethod: PaymentMethod;
 };
 
+// --- Audit Log Types ---
+export type AuditLogEntry = {
+  id: string;
+  timestamp: string; // ISO date string
+  actorUserId: string;
+  actorName: string;
+  actorRole: User['rol'] | 'Desconocido';
+  actionType: string; // e.g., "CREATE_ITEM", "UPDATE_USER", "USER_LOGIN_SUCCESS"
+  details: Record<string, any>; // Flexible object for action-specific details
+};

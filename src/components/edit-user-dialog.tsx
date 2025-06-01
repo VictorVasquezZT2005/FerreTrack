@@ -34,60 +34,64 @@ import type { User, UserFormValues } from '@/lib/types';
 import { UserFormClientSchema } from '@/lib/form-schemas';
 import { Loader2 } from 'lucide-react';
 import React, { useEffect, useTransition } from 'react';
+import { useAuth } from '@/contexts/auth-context'; // Added useAuth
 
 const formSchema = UserFormClientSchema;
 
 interface EditUserDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  user: Omit<User, 'password' | 'lastUpdated'>; // User data to pre-fill
+  user: Omit<User, 'password' | 'lastUpdated'>; 
 }
 
-export function EditUserDialog({ open, onOpenChange, user }: EditUserDialogProps) {
+export function EditUserDialog({ open, onOpenChange, user: userToEdit }: EditUserDialogProps) {
   const { toast } = useToast();
+  const { user: actorUser } = useAuth(); // Get acting user for actorUserId
   const [isPending, startTransition] = useTransition();
 
   const form = useForm<UserFormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      id: user.id,
-      nombre: user.nombre,
-      email: user.email,
-      rol: user.rol,
+      id: userToEdit.id,
+      nombre: userToEdit.nombre,
+      email: userToEdit.email,
+      rol: userToEdit.rol,
       password: '',
       confirmPassword: '',
     },
   });
 
   useEffect(() => {
-    if (user) {
+    if (userToEdit && open) { // Ensure form resets only when dialog opens with new user data
       form.reset({
-        id: user.id,
-        nombre: user.nombre,
-        email: user.email,
-        rol: user.rol,
+        id: userToEdit.id,
+        nombre: userToEdit.nombre,
+        email: userToEdit.email,
+        rol: userToEdit.rol,
         password: '',
         confirmPassword: '',
       });
     }
-  }, [user, form, open]); // Reset form when user or open state changes
+  }, [userToEdit, form, open]); 
 
   async function onSubmit(values: UserFormValues) {
     if (!values.id) {
       toast({ title: 'Error', description: 'ID de usuario no encontrado.', variant: 'destructive' });
       return;
     }
+    if (!actorUser?.id) {
+      toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario que realiza la acción.", variant: "destructive" });
+      return;
+    }
 
-    // If password fields are empty, remove them so they are not sent for update
     const dataToSubmit: UserFormValues = { ...values };
     if (!dataToSubmit.password) {
       delete dataToSubmit.password;
       delete dataToSubmit.confirmPassword;
     }
 
-
     startTransition(async () => {
-      const result = await updateUserAction(values.id!, dataToSubmit);
+      const result = await updateUserAction(values.id!, dataToSubmit, actorUser.id);
 
       if (result.success && result.user) {
         toast({
@@ -166,6 +170,7 @@ export function EditUserDialog({ open, onOpenChange, user }: EditUserDialogProps
                     <SelectContent>
                       <SelectItem value="empleado">Empleado</SelectItem>
                       <SelectItem value="admin">Administrador</SelectItem>
+                      <SelectItem value="inventory_manager">Encargado de Inventario</SelectItem>
                     </SelectContent>
                   </Select>
                   <FormMessage />

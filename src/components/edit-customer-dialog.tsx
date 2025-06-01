@@ -29,6 +29,7 @@ import { CustomerClientSchema } from '@/lib/form-schemas';
 import type { Customer, CustomerFormValues } from '@/lib/types';
 import { Loader2 } from 'lucide-react';
 import React, { useEffect, useTransition } from 'react';
+import { useAuth } from '@/contexts/auth-context'; // Added useAuth
 
 interface EditCustomerDialogProps {
   open: boolean;
@@ -41,6 +42,7 @@ const formSchema = CustomerClientSchema.omit({ id: true });
 
 export function EditCustomerDialog({ open, onOpenChange, customer, onCustomerUpdated }: EditCustomerDialogProps) {
   const { toast } = useToast();
+  const { user } = useAuth(); // Get user for actorUserId
   const [isPending, startTransition] = useTransition();
 
   const form = useForm<Omit<CustomerFormValues, 'id'>>({
@@ -68,7 +70,11 @@ export function EditCustomerDialog({ open, onOpenChange, customer, onCustomerUpd
 
   async function onSubmit(values: Omit<CustomerFormValues, 'id'>) {
     startTransition(async () => {
-      const result = await updateCustomerAction(customer.id, values);
+      if (!user?.id) {
+        toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario para la bitácora.", variant: "destructive" });
+        return;
+      }
+      const result = await updateCustomerAction(customer.id, values, user.id);
       if (result.success && result.customer) {
         toast({
           title: 'Cliente Actualizado',

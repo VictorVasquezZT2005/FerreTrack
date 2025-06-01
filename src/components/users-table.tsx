@@ -16,7 +16,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/auth-context';
 import { deleteUserAction } from '@/lib/actions';
 import React, { useState, useTransition } from 'react';
-import { Loader2, Trash2, Edit3 } from 'lucide-react'; // Added Edit3 icon
+import { Loader2, Trash2, Edit3 } from 'lucide-react'; 
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,7 +28,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { EditUserDialog } from './edit-user-dialog'; // Import EditUserDialog
+import { EditUserDialog } from './edit-user-dialog'; 
 
 interface UsersTableProps {
   users: Omit<User, 'password'>[];
@@ -63,10 +63,14 @@ export function UsersTable({ users: initialUsers, userRole }: UsersTableProps) {
       });
       return;
     }
+    if (!currentUser?.id) {
+      toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario que realiza la acción.", variant: "destructive" });
+      return;
+    }
 
     setIsDeleting(prev => ({ ...prev, [userId]: true }));
     startTransition(async () => {
-      const result = await deleteUserAction(userId);
+      const result = await deleteUserAction(userId, userName, currentUser.id);
       setIsDeleting(prev => ({ ...prev, [userId]: false }));
 
       if (result.success) {
@@ -128,7 +132,7 @@ export function UsersTable({ users: initialUsers, userRole }: UsersTableProps) {
                         className="h-7 w-7 text-muted-foreground hover:text-foreground"
                         aria-label="Editar usuario"
                         onClick={() => handleOpenEditDialog(user)}
-                        disabled={isPending || isDeleting[user.id] || currentUser?.id === user.id && user.rol === 'admin' && users.filter(u => u.rol === 'admin').length <=1 } // Disable editing self if last admin
+                        disabled={isPending || isDeleting[user.id] || currentUser?.id === user.id && user.rol === 'admin' && users.filter(u => u.rol === 'admin').length <=1 } 
                       >
                         <Edit3 className="h-4 w-4" />
                       </Button>

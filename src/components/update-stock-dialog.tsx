@@ -27,6 +27,7 @@ import { UpdateStockClientSchema } from '@/lib/form-schemas';
 import type { UpdateStockFormValues } from '@/lib/types';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
+import { useAuth } from '@/contexts/auth-context'; // Added useAuth
 
 const formSchema = UpdateStockClientSchema;
 
@@ -37,6 +38,7 @@ interface UpdateStockDialogProps {
 
 export function UpdateStockDialog({ open, onOpenChange }: UpdateStockDialogProps) {
   const { toast } = useToast();
+  const { user } = useAuth(); // Get user for actorUserId
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const form = useForm<UpdateStockFormValues>({
@@ -49,7 +51,12 @@ export function UpdateStockDialog({ open, onOpenChange }: UpdateStockDialogProps
 
   async function onSubmit(values: UpdateStockFormValues) {
     setIsSubmitting(true);
-    const result = await increaseStockByCodeAction(values);
+    if (!user?.id) {
+      toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario para la bitácora.", variant: "destructive" });
+      setIsSubmitting(false);
+      return;
+    }
+    const result = await increaseStockByCodeAction(values, user.id);
     setIsSubmitting(false);
 
     if (result.success && result.item) {

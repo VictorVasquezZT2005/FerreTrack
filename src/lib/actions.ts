@@ -3,6 +3,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
+import { ObjectId } from 'mongodb';
 import {
   addInventoryItem as dbAddInventoryItem,
   getInventory as dbGetInventory,
@@ -30,11 +31,68 @@ import {
   getUserById as dbGetUserById,
   deleteSaleAndRestoreStock as dbDeleteSaleAndRestoreStock,
   updateSaleDetails as dbUpdateSaleDetails,
+  addAuditLogInternal, // For internal use by logAuditAction
+  getAuditLogs as dbGetAuditLogs, // For fetching logs
 } from './store';
-import type { InventoryItem, NewInventoryItemFormValues, UpdateStockFormValues, Supplier, SupplierFormValues, User, UserFormValues, LoginCredentials, EditInventoryItemFormValues, Customer, CustomerFormValues, CreateSaleFormValues, SaleItemFormValues, Sale, SaleItem, PaymentMethod, EditSaleFormValues } from './types';
+import type { AuditLogEntry, InventoryItem, NewInventoryItemFormValues, UpdateStockFormValues, Supplier, SupplierFormValues, User, UserFormValues, LoginCredentials, EditInventoryItemFormValues, Customer, CustomerFormValues, CreateSaleFormValues, SaleItemFormValues, Sale, SaleItem, PaymentMethod, EditSaleFormValues } from './types';
 
 
 const NO_CUSTOMER_SELECTED_VALUE = "__NO_CUSTOMER__"; // Matches the value used in client-side Selects
+
+// --- Audit Log Actions ---
+export async function logAuditAction(
+  actorUserId: string,
+  actionType: string,
+  details: Record<string, any> = {}
+) {
+  let actorName = 'Usuario Desconocido';
+  let actorRole: User['rol'] | 'Desconocido' = 'Desconocido';
+
+  if (ObjectId.isValid(actorUserId)) {
+    try {
+      const actor = await dbGetUserById(actorUserId);
+      if (actor) {
+        actorName = actor.nombre;
+        actorRole = actor.rol;
+      } else {
+        console.warn(`[logAuditAction] Actor user not found for ID: ${actorUserId}. Logging with default actor info.`);
+      }
+    } catch (fetchError) {
+      console.error(`[logAuditAction] Error fetching actor details for ID ${actorUserId}:`, fetchError);
+      // Proceed with default actor info
+    }
+  } else {
+     console.warn(`[logAuditAction] Invalid actorUserId format: ${actorUserId}. Audit log entry will use default actor info.`);
+  }
+
+  const logEntryData: Omit<AuditLogEntry, 'id'> = {
+    timestamp: new Date().toISOString(),
+    actorUserId,
+    actorName,
+    actorRole,
+    actionType,
+    details,
+  };
+
+  console.log('[logAuditAction] Attempting to log audit entry:', JSON.stringify(logEntryData, null, 2));
+  try {
+    await addAuditLogInternal(logEntryData);
+  } catch (error) {
+    console.error('[logAuditAction] Failed to create audit log entry via addAuditLogInternal:', error);
+    // We don't want a logging failure to break the primary action, so we just log the error here.
+  }
+}
+
+export async function fetchAuditLogsAction(): Promise<{ success: boolean; logs?: AuditLogEntry[]; error?: string }> {
+  try {
+    const logs = await dbGetAuditLogs();
+    return { success: true, logs };
+  } catch (error: any) {
+    console.error("Error fetching audit logs (action layer):", error);
+    return { success: false, error: "No se pudo cargar la bitácora debido a un error interno del servidor." };
+  }
+}
+
 
 // --- Inventory Schemas and Actions ---
 const NewInventoryItemServerSchema = z.object({
@@ -85,7 +143,10 @@ export async function fetchInventoryItemsForSaleAction(): Promise<Pick<Inventory
   }));
 }
 
-export async function addNewInventoryItemAction(formData: Omit<NewInventoryItemFormValues, 'category'>) {
+export async function addNewInventoryItemAction(
+  formData: Omit<NewInventoryItemFormValues, 'category'>,
+  actorUserId: string
+) {
   const validatedFields = NewInventoryItemServerSchema.safeParse(formData);
 
   if (!validatedFields.success) {
@@ -109,6 +170,12 @@ export async function addNewInventoryItemAction(formData: Omit<NewInventoryItemF
     }
     if (result.item) {
       revalidatePath('/inventory');
+      await logAuditAction(actorUserId, 'CREATE_ITEM', {
+        itemId: result.item.id,
+        itemName: result.item.name,
+        itemCode: result.item.code,
+        initialQuantity: result.item.quantity,
+      });
       return { success: true, item: result.item };
     }
     return { success: false, error: "Error desconocido al añadir el artículo." };
@@ -118,7 +185,11 @@ export async function addNewInventoryItemAction(formData: Omit<NewInventoryItemF
   }
 }
 
-export async function updateInventoryItemDetailsAction(itemId: string, formData: EditInventoryItemFormValues) {
+export async function updateInventoryItemDetailsAction(
+  itemId: string,
+  formData: EditInventoryItemFormValues,
+  actorUserId: string
+) {
   const validatedFields = EditInventoryItemServerSchema.omit({id: true}).safeParse(formData);
 
   if (!validatedFields.success) {
@@ -139,9 +210,20 @@ export async function updateInventoryItemDetailsAction(itemId: string, formData:
   };
 
   try {
+    const originalItem = await dbGetInventoryItemById(itemId); // Get original for logging
+    if (!originalItem) {
+        return { success: false, error: "Artículo original no encontrado para la bitácora." };
+    }
     const updatedItem = await dbUpdateInventoryItemDetails(itemId, itemDetailsToUpdate);
     if (updatedItem) {
       revalidatePath('/inventory');
+      await logAuditAction(actorUserId, 'UPDATE_ITEM_DETAILS', {
+        itemId: updatedItem.id,
+        itemName: updatedItem.name,
+        itemCode: updatedItem.code,
+        changes: formData, // Log what was attempted to change
+        originalName: originalItem.name
+      });
       return { success: true, item: updatedItem };
     } else {
       return { success: false, error: "Artículo no encontrado o no se pudo actualizar." };
@@ -152,7 +234,10 @@ export async function updateInventoryItemDetailsAction(itemId: string, formData:
   }
 }
 
-export async function increaseStockByCodeAction(formData: UpdateStockFormValues) {
+export async function increaseStockByCodeAction(
+  formData: UpdateStockFormValues,
+  actorUserId: string
+) {
   const validatedFields = UpdateStockServerSchema.safeParse(formData);
 
   if (!validatedFields.success) {
@@ -166,9 +251,17 @@ export async function increaseStockByCodeAction(formData: UpdateStockFormValues)
   const { code, quantityToAdd } = validatedFields.data;
 
   try {
+    const originalItem = await dbGetInventory().then(items => items.find(i => i.code === code)); // For logging
     const updatedItem = await dbIncreaseItemQuantityByCode(code, quantityToAdd);
     if (updatedItem) {
       revalidatePath('/inventory');
+      await logAuditAction(actorUserId, 'INCREASE_STOCK', {
+        itemCode: updatedItem.code,
+        itemName: updatedItem.name,
+        quantityAdded: quantityToAdd,
+        newQuantity: updatedItem.quantity,
+        originalQuantity: originalItem?.quantity,
+      });
       return { success: true, item: updatedItem };
     } else {
       return {
@@ -183,28 +276,50 @@ export async function increaseStockByCodeAction(formData: UpdateStockFormValues)
   }
 }
 
-export async function updateInventoryItemQuantityAction(itemId: string, newQuantity: number) {
+export async function updateInventoryItemQuantityAction(
+  itemId: string,
+  newQuantity: number,
+  actorUserId: string // Added for audit logging
+) {
   if (typeof newQuantity !== 'number' || newQuantity < 0) {
     return { success: false, error: "Cantidad inválida." };
   }
   try {
+    const originalItem = await dbGetInventoryItemById(itemId);
     const updatedItem = await dbUpdateItemQuantity(itemId, newQuantity);
-    if (updatedItem) {
+    if (updatedItem && originalItem) {
       revalidatePath('/inventory');
+      await logAuditAction(actorUserId, 'UPDATE_ITEM_QUANTITY', {
+        itemId: updatedItem.id,
+        itemName: updatedItem.name,
+        itemCode: updatedItem.code,
+        newQuantity: updatedItem.quantity,
+        oldQuantity: originalItem.quantity,
+      });
       return { success: true, item: updatedItem };
     }
-    return { success: false, error: "Artículo no encontrado." };
+    return { success: false, error: "Artículo no encontrado o no se pudo obtener información original." };
   } catch (error: any) {
     console.error("Error actualizando cantidad:", error);
     return { success: false, error: error.message || "Error al actualizar la cantidad del artículo." };
   }
 }
 
-export async function deleteInventoryItemAction(itemId: string) {
+export async function deleteInventoryItemAction(
+  itemId: string,
+  itemName: string, // Added for audit logging
+  itemCode: string, // Added for audit logging
+  actorUserId: string // Added for audit logging
+) {
   try {
     const success = await dbDeleteInventoryItem(itemId);
     if (success) {
       revalidatePath('/inventory');
+      await logAuditAction(actorUserId, 'DELETE_ITEM', {
+        itemId,
+        itemName,
+        itemCode,
+      });
       return { success: true };
     }
     return { success: false, error: "No se pudo eliminar el artículo o no fue encontrado." };
@@ -227,7 +342,10 @@ export async function fetchSuppliersAction(): Promise<Supplier[]> {
   return dbGetSuppliers();
 }
 
-export async function addNewSupplierAction(formData: SupplierFormValues) {
+export async function addNewSupplierAction(
+  formData: SupplierFormValues,
+  actorUserId: string
+) {
   const validatedFields = SupplierServerSchema.safeParse(formData);
 
   if (!validatedFields.success) {
@@ -246,6 +364,10 @@ export async function addNewSupplierAction(formData: SupplierFormValues) {
   try {
     const newSupplier = await dbAddSupplier({ ...restOfData, productos_suministrados });
     revalidatePath('/suppliers');
+    await logAuditAction(actorUserId, 'CREATE_SUPPLIER', {
+      supplierId: newSupplier.id,
+      supplierName: newSupplier.name,
+    });
     return { success: true, supplier: newSupplier };
   } catch (error: any) {
     console.error("Error añadiendo proveedor:", error);
@@ -253,7 +375,11 @@ export async function addNewSupplierAction(formData: SupplierFormValues) {
   }
 }
 
-export async function updateSupplierAction(supplierId: string, formData: SupplierFormValues) {
+export async function updateSupplierAction(
+  supplierId: string,
+  formData: SupplierFormValues,
+  actorUserId: string
+) {
   const validatedFields = SupplierServerSchema.safeParse(formData);
 
   if (!validatedFields.success) {
@@ -273,6 +399,11 @@ export async function updateSupplierAction(supplierId: string, formData: Supplie
     const updatedSupplier = await dbUpdateSupplier(supplierId, { ...restOfData, productos_suministrados });
     if (updatedSupplier) {
       revalidatePath('/suppliers');
+      await logAuditAction(actorUserId, 'UPDATE_SUPPLIER', {
+        supplierId: updatedSupplier.id,
+        supplierName: updatedSupplier.name,
+        changes: formData
+      });
       return { success: true, supplier: updatedSupplier };
     } else {
       return { success: false, error: "Proveedor no encontrado o no se pudo actualizar." };
@@ -283,11 +414,19 @@ export async function updateSupplierAction(supplierId: string, formData: Supplie
   }
 }
 
-export async function deleteSupplierAction(supplierId: string) {
+export async function deleteSupplierAction(
+  supplierId: string,
+  supplierName: string, // Added for audit logging
+  actorUserId: string // Added for audit logging
+) {
   try {
     const success = await dbDeleteSupplier(supplierId);
     if (success) {
       revalidatePath('/suppliers');
+      await logAuditAction(actorUserId, 'DELETE_SUPPLIER', {
+        supplierId,
+        supplierName,
+      });
       return { success: true };
     }
     return { success: false, error: "No se pudo eliminar el proveedor o no fue encontrado." };
@@ -302,7 +441,7 @@ const UserServerSchema = z.object({
   id: z.string().optional(),
   nombre: z.string().min(2, "El nombre debe tener al menos 2 caracteres."),
   email: z.string().email("Email de usuario inválido."),
-  rol: z.enum(['admin', 'empleado'], { required_error: 'Debes seleccionar un rol.' }),
+  rol: z.enum(['admin', 'empleado', 'inventory_manager'], { required_error: 'Debes seleccionar un rol.' }),
   password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres.").optional(),
 });
 
@@ -310,7 +449,10 @@ export async function fetchUsersAction(): Promise<Omit<User, 'password'>[]> {
   return dbGetUsers();
 }
 
-export async function addNewUserAction(formData: UserFormValues) {
+export async function addNewUserAction(
+  formData: UserFormValues,
+  actorUserId: string
+) {
   const AddUserServerSchema = UserServerSchema.extend({
     password: z.string().min(6, "La contraseña es obligatoria y debe tener al menos 6 caracteres."),
   }).omit({id: true});
@@ -338,6 +480,12 @@ export async function addNewUserAction(formData: UserFormValues) {
     }
     if (result.user) {
         revalidatePath('/users');
+        await logAuditAction(actorUserId, 'CREATE_USER', {
+          createdUserId: result.user.id,
+          createdUserName: result.user.nombre,
+          createdUserEmail: result.user.email,
+          createdUserRole: result.user.rol,
+        });
         return { success: true, user: result.user };
     }
     return { success: false, error: "Error desconocido al añadir el usuario." };
@@ -351,7 +499,11 @@ export async function addNewUserAction(formData: UserFormValues) {
   }
 }
 
-export async function updateUserAction(userId: string, formData: UserFormValues) {
+export async function updateUserAction(
+  userIdToUpdate: string,
+  formData: UserFormValues,
+  actorUserId: string
+) {
   const EditUserServerSchema = UserServerSchema.omit({id: true});
   const validatedFields = EditUserServerSchema.safeParse(formData);
 
@@ -371,9 +523,14 @@ export async function updateUserAction(userId: string, formData: UserFormValues)
   }
 
   try {
-    const updatedUser = await dbUpdateUser(userId, updatePayload);
+    const updatedUser = await dbUpdateUser(userIdToUpdate, updatePayload);
     if (updatedUser) {
       revalidatePath('/users');
+      await logAuditAction(actorUserId, 'UPDATE_USER', {
+        updatedUserId: updatedUser.id,
+        updatedUserName: updatedUser.nombre,
+        changes: { email: updatedUser.email, rol: updatedUser.rol, passwordChanged: !!updatePayload.password }
+      });
       return { success: true, user: updatedUser };
     } else {
       return { success: false, error: "Usuario no encontrado o no se pudo actualizar." };
@@ -387,11 +544,19 @@ export async function updateUserAction(userId: string, formData: UserFormValues)
   }
 }
 
-export async function deleteUserAction(userId: string) {
+export async function deleteUserAction(
+  userIdToDelete: string,
+  userNameToDelete: string, // Added for audit logging
+  actorUserId: string // Added for audit logging
+) {
   try {
-    const success = await dbDeleteUser(userId);
+    const success = await dbDeleteUser(userIdToDelete);
     if (success) {
       revalidatePath('/users');
+      await logAuditAction(actorUserId, 'DELETE_USER', {
+        deletedUserId: userIdToDelete,
+        deletedUserName: userNameToDelete,
+      });
       return { success: true };
     }
     return { success: false, error: "No se pudo eliminar el usuario o no fue encontrado." };
@@ -420,8 +585,11 @@ export async function loginUserAction(credentials: LoginCredentials): Promise<{ 
   try {
     const user = await dbAuthenticateUser(validatedFields.data);
     if (user) {
+      await logAuditAction(user.id, 'USER_LOGIN_SUCCESS', { username: user.nombre });
       return { success: true, user };
     } else {
+      // Cannot log actor if login fails and we don't know who it is
+      console.warn(`Login attempt failed for username: ${credentials.nombre}`);
       return { success: false, error: "Nombre de usuario o contraseña incorrectos. Por favor, inténtalo de nuevo." };
     }
   } catch (error: any) {
@@ -461,7 +629,10 @@ export async function fetchCustomersAction(): Promise<Customer[]> {
   return dbGetCustomers();
 }
 
-export async function addNewCustomerAction(formData: CustomerFormValues) {
+export async function addNewCustomerAction(
+  formData: CustomerFormValues,
+  actorUserId: string
+) {
   const validatedFields = CustomerServerSchema.safeParse(formData);
   if (!validatedFields.success) {
     return {
@@ -473,6 +644,10 @@ export async function addNewCustomerAction(formData: CustomerFormValues) {
   try {
     const newCustomer = await dbAddCustomer(validatedFields.data);
     revalidatePath('/customers');
+    await logAuditAction(actorUserId, 'CREATE_CUSTOMER', {
+      customerId: newCustomer.id,
+      customerName: newCustomer.name,
+    });
     return { success: true, customer: newCustomer };
   } catch (error: any) {
     console.error("Error añadiendo cliente:", error);
@@ -480,7 +655,11 @@ export async function addNewCustomerAction(formData: CustomerFormValues) {
   }
 }
 
-export async function updateCustomerAction(customerId: string, formData: CustomerFormValues) {
+export async function updateCustomerAction(
+  customerId: string,
+  formData: CustomerFormValues,
+  actorUserId: string
+) {
   const validatedFields = CustomerServerSchema.safeParse(formData);
   if (!validatedFields.success) {
     return {
@@ -493,6 +672,11 @@ export async function updateCustomerAction(customerId: string, formData: Custome
     const updatedCustomer = await dbUpdateCustomer(customerId, validatedFields.data);
     if (updatedCustomer) {
       revalidatePath('/customers');
+      await logAuditAction(actorUserId, 'UPDATE_CUSTOMER', {
+        customerId: updatedCustomer.id,
+        customerName: updatedCustomer.name,
+        changes: formData
+      });
       return { success: true, customer: updatedCustomer };
     }
     return { success: false, error: "Cliente no encontrado o no se pudo actualizar." };
@@ -502,11 +686,19 @@ export async function updateCustomerAction(customerId: string, formData: Custome
   }
 }
 
-export async function deleteCustomerAction(customerId: string) {
+export async function deleteCustomerAction(
+  customerId: string,
+  customerName: string, // Added for audit logging
+  actorUserId: string // Added for audit logging
+) {
   try {
     const success = await dbDeleteCustomer(customerId);
     if (success) {
       revalidatePath('/customers');
+      await logAuditAction(actorUserId, 'DELETE_CUSTOMER', {
+        customerId,
+        customerName,
+      });
       return { success: true };
     }
     return { success: false, error: "No se pudo eliminar el cliente o no fue encontrado." };
@@ -532,7 +724,7 @@ const CreateSaleServerSchema = z.object({
 });
 
 export async function createSaleAction(
-  userId: string,
+  actorUserId: string, // Renamed from userId for consistency
   formData: CreateSaleFormValues
 ): Promise<{ success: boolean; sale?: Sale; error?: string; stockError?: string, fieldErrors?: any }> {
   const validatedFields = CreateSaleServerSchema.safeParse(formData);
@@ -555,8 +747,8 @@ export async function createSaleAction(
     const customer = customers.find(c => c.id === formCustomerId);
     customerName = customer?.name;
   } else {
-    actualCustomerId = undefined; // Ensure 'Consumidor Final' is stored as undefined customerId
-    customerName = undefined;
+    actualCustomerId = undefined; 
+    customerName = undefined; // Or "Consumidor Final" if you want to log that explicitly
   }
 
 
@@ -574,11 +766,11 @@ export async function createSaleAction(
   const saleDataToSave: Omit<Sale, 'id' | 'saleNumber' | 'lastUpdated' | 'sellerName'> & { userId: string } = {
     date: new Date().toISOString(),
     customerId: actualCustomerId,
-    customerName,
+    customerName, // This will be undefined if it's a "Consumidor Final"
     items: saleItems,
     totalAmount,
     paymentMethod,
-    userId,
+    userId: actorUserId, // Use actorUserId here
   };
 
   try {
@@ -587,6 +779,15 @@ export async function createSaleAction(
       revalidatePath('/inventory');
       revalidatePath('/sales');
       revalidatePath(`/sales/${result.sale.id}`);
+      await logAuditAction(actorUserId, 'CREATE_SALE', {
+        saleId: result.sale.id,
+        saleNumber: result.sale.saleNumber,
+        totalAmount: result.sale.totalAmount,
+        itemCount: result.sale.items.length,
+        paymentMethod: result.sale.paymentMethod,
+        customerId: result.sale.customerId,
+        customerName: result.sale.customerName
+      });
       return { success: true, sale: result.sale };
     } else if (result.stockError) {
       return { success: false, stockError: result.stockError };
@@ -618,12 +819,21 @@ export async function fetchSaleByIdAction(saleId: string): Promise<Sale | null> 
   return sale;
 }
 
-export async function deleteSaleAction(saleId: string): Promise<{ success: boolean; error?: string }> {
+export async function deleteSaleAction(
+  saleId: string,
+  saleNumber: string, // Added for audit logging
+  actorUserId: string // Added for audit logging
+): Promise<{ success: boolean; error?: string }> {
   try {
     const result = await dbDeleteSaleAndRestoreStock(saleId);
     if (result.success) {
       revalidatePath('/sales');
       revalidatePath('/inventory');
+      await logAuditAction(actorUserId, 'DELETE_SALE', {
+        saleId,
+        saleNumber,
+        stockRestored: true,
+      });
       return { success: true };
     }
     return { success: false, error: result.error || "No se pudo eliminar la venta." };
@@ -641,7 +851,8 @@ const EditSaleServerSchema = z.object({
 });
 
 export async function updateSaleAction(
-  formData: EditSaleFormValues
+  formData: EditSaleFormValues,
+  actorUserId: string // Added for audit logging
 ): Promise<{ success: boolean; sale?: Sale; error?: string; fieldErrors?: any }> {
   const validatedFields = EditSaleServerSchema.safeParse(formData);
 
@@ -663,20 +874,33 @@ export async function updateSaleAction(
      const customer = customers.find(c => c.id === formCustomerId);
      customerName = customer?.name;
   } else {
-     actualCustomerId = undefined; // For "Consumidor Final"
-     customerName = undefined;
+     actualCustomerId = undefined; 
+     customerName = undefined; // Or "Consumidor Final"
   }
 
   try {
+    const originalSale = await dbGetSaleById(saleId); // For logging changes
     const updatedSale = await dbUpdateSaleDetails(saleId, {
       customerId: actualCustomerId,
       customerName: customerName,
       paymentMethod: paymentMethod,
     });
 
-    if (updatedSale) {
+    if (updatedSale && originalSale) {
       revalidatePath('/sales');
       revalidatePath(`/sales/${saleId}`);
+      await logAuditAction(actorUserId, 'UPDATE_SALE_DETAILS', {
+        saleId: updatedSale.id,
+        saleNumber: updatedSale.saleNumber,
+        changes: {
+            customerId: updatedSale.customerId,
+            customerName: updatedSale.customerName,
+            paymentMethod: updatedSale.paymentMethod
+        },
+        originalCustomerId: originalSale.customerId,
+        originalCustomerName: originalSale.customerName,
+        originalPaymentMethod: originalSale.paymentMethod
+      });
       return { success: true, sale: updatedSale };
     } else {
       return { success: false, error: "Venta no encontrada o no se pudo actualizar." };
@@ -686,4 +910,3 @@ export async function updateSaleAction(
     return { success: false, error: error.message || "Error al actualizar la venta." };
   }
 }
-

@@ -21,11 +21,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useToast } from '@/hooks/use-toast';
 import { fetchCustomersAction, fetchInventoryItemsForSaleAction, createSaleAction } from '@/lib/actions';
 import type { Customer, InventoryItem, CreateSaleFormValues, SaleItemFormValues, PaymentMethod } from '@/lib/types';
-import { Loader2, PlusCircle, Trash2, ShoppingCart, UserCircleIcon, Search, CreditCard, Landmark } from 'lucide-react';
+import { Loader2, PlusCircle, Trash2, ShoppingCart, UserCircleIcon, Search, CreditCard, Landmark, ShieldAlert } from 'lucide-react';
 import { useAuth } from '@/contexts/auth-context';
 import { useRouter } from 'next/navigation';
 import { FormItem } from '@/components/ui/form';
-import { SimulatedCardPaymentDialog } from '@/components/simulated-card-payment-dialog'; // Import the new dialog
+import { SimulatedCardPaymentDialog } from '@/components/simulated-card-payment-dialog';
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import PageLoading from '@/app/loading';
+
 
 const SaleItemClientSchema = z.object({
   productId: z.string().min(1, "Debe seleccionar un producto."),
@@ -52,22 +55,19 @@ const NO_CUSTOMER_SELECTED_VALUE = "__NO_CUSTOMER__";
 
 export default function CreateSalePage() {
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const router = useRouter();
-  const [isProcessingSale, startTransition] = useTransition(); // Renamed for clarity
+  const [isProcessingSale, startTransition] = useTransition();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [inventoryItems, setInventoryItems] = useState<Pick<InventoryItem, 'id' | 'name' | 'code' | 'quantity' | 'unitPrice'>[]>([]);
-  const [isLoadingCustomers, setIsLoadingCustomers] = useState(true);
-  const [isLoadingInventory, setIsLoadingInventory] = useState(true);
+  const [isLoadingData, setIsLoadingData] = useState(true);
   
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProductForForm, setSelectedProductForForm] = useState<Pick<InventoryItem, 'id' | 'name' | 'code' | 'quantity' | 'unitPrice'> | null>(null);
   const [quantityForSelectedProduct, setQuantityForSelectedProduct] = useState("1");
 
-  // State for card payment dialog
   const [isCardPaymentDialogOpen, setIsCardPaymentDialogOpen] = useState(false);
   const [pendingSaleData, setPendingSaleData] = useState<CreateSaleFormValues | null>(null);
-
 
   const form = useForm<CreateSaleFormValues>({
     resolver: zodResolver(CreateSaleClientSchema),
@@ -84,25 +84,32 @@ export default function CreateSalePage() {
   });
 
   useEffect(() => {
-    async function loadInitialData() {
-      setIsLoadingCustomers(true);
-      setIsLoadingInventory(true);
-      try {
-        const [fetchedCustomers, fetchedInventory] = await Promise.all([
-          fetchCustomersAction(),
-          fetchInventoryItemsForSaleAction(),
-        ]);
-        setCustomers(fetchedCustomers);
-        setInventoryItems(fetchedInventory);
-      } catch (error) {
-        console.error("Error al cargar datos iniciales para la venta:", error);
-        toast({ title: "Error", description: "No se pudieron cargar los datos necesarios para la venta.", variant: "destructive" });
-      }
-      setIsLoadingCustomers(false);
-      setIsLoadingInventory(false);
+    if (!authLoading && user && user.rol === 'inventory_manager') {
+      router.push('/');
+      return;
     }
-    loadInitialData();
-  }, [toast]);
+
+    if (!authLoading && user && (user.rol === 'admin' || user.rol === 'empleado')) {
+      async function loadInitialData() {
+        setIsLoadingData(true);
+        try {
+          const [fetchedCustomers, fetchedInventory] = await Promise.all([
+            fetchCustomersAction(),
+            fetchInventoryItemsForSaleAction(),
+          ]);
+          setCustomers(fetchedCustomers);
+          setInventoryItems(fetchedInventory);
+        } catch (error) {
+          console.error("Error al cargar datos iniciales para la venta:", error);
+          toast({ title: "Error", description: "No se pudieron cargar los datos necesarios para la venta.", variant: "destructive" });
+        }
+        setIsLoadingData(false);
+      }
+      loadInitialData();
+    } else if (!authLoading && !user) {
+        router.push('/login');
+    }
+  }, [user, authLoading, router, toast]);
 
   const filteredInventoryItems = inventoryItems.filter(item =>
     item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -195,7 +202,7 @@ export default function CreateSalePage() {
     if (values.paymentMethod === 'tarjeta') {
       setPendingSaleData(values);
       setIsCardPaymentDialogOpen(true);
-    } else { // Efectivo
+    } else {
       proceedWithSaleCreation(values);
     }
   }
@@ -203,7 +210,7 @@ export default function CreateSalePage() {
   const handleCardPaymentSuccess = () => {
     if (pendingSaleData) {
       proceedWithSaleCreation(pendingSaleData);
-      setPendingSaleData(null); // Clear pending data
+      setPendingSaleData(null);
     }
   };
 
@@ -213,11 +220,20 @@ export default function CreateSalePage() {
     return sum + (isNaN(quantity) ? 0 : quantity * item.unitPriceAtSale);
   }, 0);
 
-  if (isLoadingCustomers || isLoadingInventory) {
+  if (authLoading || isLoadingData) {
+    return <PageLoading />;
+  }
+
+  if (user?.rol === 'inventory_manager') {
     return (
-      <div className="flex justify-center items-center min-h-[calc(100vh-200px)]">
-        <Loader2 className="h-12 w-12 animate-spin text-primary" />
-        <p className="ml-4 text-lg text-muted-foreground">Cargando datos para la venta...</p>
+      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
+        <Alert variant="destructive" className="max-w-md">
+          <ShieldAlert className="h-4 w-4" />
+          <AlertTitle>Acceso Denegado</AlertTitle>
+          <AlertDescription>
+            No tienes permisos para acceder a esta sección.
+          </AlertDescription>
+        </Alert>
       </div>
     );
   }
@@ -237,7 +253,6 @@ export default function CreateSalePage() {
         <form onSubmit={form.handleSubmit(onSubmit)}>
           <CardContent className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Customer Selection */}
               <div className="space-y-2">
                 <Label htmlFor="customerId" className="flex items-center gap-2 text-base">
                   <UserCircleIcon className="h-5 w-5 text-muted-foreground" />
@@ -250,10 +265,10 @@ export default function CreateSalePage() {
                     <Select
                       onValueChange={field.onChange}
                       value={field.value || NO_CUSTOMER_SELECTED_VALUE}
-                      disabled={isLoadingCustomers}
+                      disabled={isLoadingData}
                     >
                       <SelectTrigger id="customerId">
-                        <SelectValue placeholder={isLoadingCustomers ? "Cargando clientes..." : "Seleccionar cliente"} />
+                        <SelectValue placeholder={isLoadingData ? "Cargando clientes..." : "Seleccionar cliente"} />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value={NO_CUSTOMER_SELECTED_VALUE}>Venta sin cliente específico (Consumidor Final)</SelectItem>
@@ -269,7 +284,6 @@ export default function CreateSalePage() {
                 {form.formState.errors.customerId && <p className="text-sm font-medium text-destructive">{form.formState.errors.customerId.message}</p>}
               </div>
 
-              {/* Payment Method */}
               <div className="space-y-2">
                 <Label className="text-base flex items-center gap-2">
                   <CreditCard className="h-5 w-5 text-muted-foreground" />
@@ -303,8 +317,6 @@ export default function CreateSalePage() {
               </div>
             </div>
 
-
-            {/* Product Selection Section */}
             <Card className="bg-muted/30 p-4">
               <CardHeader className="p-2 pb-3">
                 <CardTitle className="text-xl">Añadir Artículos</CardTitle>
@@ -323,7 +335,7 @@ export default function CreateSalePage() {
                         if (selectedProductForForm && e.target.value === '') setSelectedProductForForm(null);
                       }}
                       className="pl-8"
-                      disabled={isLoadingInventory}
+                      disabled={isLoadingData}
                     />
                   </div>
                 </div>
@@ -378,8 +390,6 @@ export default function CreateSalePage() {
               </CardContent>
             </Card>
 
-
-            {/* Sale Items Table */}
             {fields.length > 0 && (
               <div className="space-y-2">
                 <h3 className="text-lg font-semibold">Artículos en esta Venta</h3>
@@ -436,7 +446,6 @@ export default function CreateSalePage() {
               </div>
             )}
 
-            {/* Total Amount */}
             <div className="pt-4 text-right">
               <p className="text-2xl font-bold">Total de la Venta: <span className="text-primary">${totalAmount.toFixed(2)}</span></p>
             </div>

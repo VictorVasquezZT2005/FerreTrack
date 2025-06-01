@@ -30,17 +30,19 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { EditSaleDialog } from './edit-sale-dialog'; // Import EditSaleDialog
+import { EditSaleDialog } from './edit-sale-dialog'; 
+import { useAuth } from '@/contexts/auth-context'; // Added useAuth
 
 interface SalesTableProps {
   sales: Sale[];
   userRole?: User['rol'];
   onSaleDeleted: (deletedSaleId: string) => void;
-  onSaleUpdated: (updatedSale: Sale) => void; // Callback for updates
+  onSaleUpdated: (updatedSale: Sale) => void; 
 }
 
 export function SalesTable({ sales, userRole, onSaleDeleted, onSaleUpdated }: SalesTableProps) {
   const { toast } = useToast();
+  const { user: actorUser } = useAuth(); // Get user for actorUserId
   const [isDeleting, setIsDeleting] = useState<Record<string, boolean>>({});
   const [isPending, startTransition] = useTransition();
   const isAdmin = userRole === 'admin';
@@ -58,9 +60,13 @@ export function SalesTable({ sales, userRole, onSaleDeleted, onSaleUpdated }: Sa
       toast({ title: 'Acción no permitida', description: 'No tienes permisos para eliminar ventas.', variant: 'destructive' });
       return;
     }
+    if (!actorUser?.id) {
+      toast({ title: 'Error de autenticación', description: 'No se pudo identificar al usuario para la bitácora.', variant: 'destructive' });
+      return;
+    }
     setIsDeleting(prev => ({ ...prev, [saleId]: true }));
     startTransition(async () => {
-      const result = await deleteSaleAction(saleId);
+      const result = await deleteSaleAction(saleId, saleNumber, actorUser.id);
       setIsDeleting(prev => ({ ...prev, [saleId]: false }));
 
       if (result.success) {
@@ -80,15 +86,14 @@ export function SalesTable({ sales, userRole, onSaleDeleted, onSaleUpdated }: Sa
   };
 
   const handleOpenEditDialog = (saleToEdit: Sale) => {
-    if (!isAdmin) return; // Only admin can open edit dialog
+    if (!isAdmin) return; 
     setSelectedSaleForEdit(saleToEdit);
     setIsEditDialogOpen(true);
   };
 
   const handleSaleUpdatedInDialog = (updatedSale: Sale) => {
-    onSaleUpdated(updatedSale); // Call parent callback to update state
+    onSaleUpdated(updatedSale); 
     setIsEditDialogOpen(false);
-    // Toast for update success is handled in EditSaleDialog or the action itself
   };
 
 
@@ -129,7 +134,7 @@ export function SalesTable({ sales, userRole, onSaleDeleted, onSaleUpdated }: Sa
                     <span className="sr-only sm:not-sr-only sm:ml-1">Factura</span>
                   </Link>
                 </Button>
-                {isAdmin && ( // Only show edit button for admins
+                {isAdmin && ( 
                   <Button
                     size="icon"
                     variant="ghost"
@@ -184,7 +189,7 @@ export function SalesTable({ sales, userRole, onSaleDeleted, onSaleUpdated }: Sa
         </TableBody>
       </Table>
     </div>
-     {selectedSaleForEdit && isAdmin && ( // Only mount/render dialog if admin
+     {selectedSaleForEdit && isAdmin && ( 
         <EditSaleDialog
           open={isEditDialogOpen}
           onOpenChange={setIsEditDialogOpen}
