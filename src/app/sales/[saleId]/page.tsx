@@ -102,6 +102,7 @@ export default async function SaleDetailPage({ params }: SaleDetailPageProps) {
                   <TableHead className="w-[100px] text-center">Código</TableHead>
                   <TableHead>Descripción</TableHead>
                   <TableHead className="text-center">Cant.</TableHead>
+                  <TableHead className="text-center">Unidad</TableHead>
                   <TableHead className="text-right">P. Unit.</TableHead>
                   <TableHead className="text-right">Subtotal</TableHead>
                 </TableRow>
@@ -111,9 +112,10 @@ export default async function SaleDetailPage({ params }: SaleDetailPageProps) {
                   <TableRow key={index}>
                     <TableCell className="font-mono text-xs text-center">{item.productCode}</TableCell>
                     <TableCell>{item.productName}</TableCell>
-                    <TableCell className="text-center">{item.quantity}</TableCell>
-                    <TableCell className="text-right">${item.unitPriceAtSale.toFixed(2)}</TableCell>
-                    <TableCell className="text-right">${item.subtotal.toFixed(2)}</TableCell>
+                    <TableCell className="text-center">{item.quantitySold}</TableCell>
+                    <TableCell className="text-center">{item.unitNameAtSale}</TableCell>
+                    <TableCell className="text-right">${typeof item.priceAtSale === 'number' ? item.priceAtSale.toFixed(2) : '0.00'}</TableCell>
+                    <TableCell className="text-right">${typeof item.subtotal === 'number' ? item.subtotal.toFixed(2) : '0.00'}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -125,7 +127,7 @@ export default async function SaleDetailPage({ params }: SaleDetailPageProps) {
               <Separator />
               <div className="flex justify-between text-xl font-bold text-primary">
                 <span>TOTAL:</span>
-                <span>${sale.totalAmount.toFixed(2)}</span>
+                <span>${typeof sale.totalAmount === 'number' ? sale.totalAmount.toFixed(2) : '0.00'}</span>
               </div>
             </div>
           </div>

@@ -11,6 +11,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogClose,
 } from '@/components/ui/dialog';
 import {
   Form,
@@ -19,6 +20,7 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
+  FormDescription, 
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import {
@@ -31,15 +33,29 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { addNewInventoryItemAction, fetchSuppliersAction } from '@/lib/actions';
 import { NewInventoryItemClientSchema } from '@/lib/form-schemas';
-import type { NewInventoryItemFormValues, Supplier } from '@/lib/types';
-import { Loader2 } from 'lucide-react';
-import React, { useState, useEffect } from 'react';
+import type { NewInventoryItemFormValues, Supplier, UnitType } from '@/lib/types';
+import { Loader2, DollarSign } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { CATEGORY_CODES, getCategoryNameByCodePrefix } from '@/lib/category-mapping';
-import { useAuth } from '@/contexts/auth-context'; // Added useAuth
+import { useAuth } from '@/contexts/auth-context'; 
 
 const formSchema = NewInventoryItemClientSchema;
 
 const NO_SUPPLIER_OPTION_VALUE = "__#NONE#_SUPPLIER__"; 
+
+const DEFAULT_FORM_VALUES: NewInventoryItemFormValues = {
+  categoryCodePrefix: '',
+  shelfCodePrefix: '',
+  name: '',
+  quantity: '1', 
+  unitPrice: '0',
+  stockMinimo: '0', 
+  dailySales: '0', 
+  category: '',
+  supplier: '',
+  unitType: 'countable',
+  unitName: 'unidad',
+};
 
 interface AddInventoryItemDialogProps {
   open: boolean;
@@ -48,42 +64,26 @@ interface AddInventoryItemDialogProps {
 
 export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemDialogProps) {
   const { toast } = useToast();
-  const { user } = useAuth(); // Get user for actorUserId
+  const { user } = useAuth(); 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [suppliersList, setSuppliersList] = useState<Supplier[]>([]);
   const [isLoadingSuppliers, setIsLoadingSuppliers] = useState(false);
 
   const form = useForm<NewInventoryItemFormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: {
-      categoryCodePrefix: '',
-      shelfCodePrefix: '',
-      name: '',
-      quantity: '1',
-      stockMinimo: '0',
-      dailySales: '0',
-      category: '', 
-      supplier: '',
-      unitPrice: '',
-    },
+    defaultValues: DEFAULT_FORM_VALUES,
   });
 
   const watchedCategoryCodePrefix = form.watch('categoryCodePrefix');
+  const watchedUnitType = form.watch('unitType');
+
+  const resetFormAndState = useCallback(() => {
+    form.reset(DEFAULT_FORM_VALUES);
+  }, [form]);
 
   useEffect(() => {
     if (open) {
-      form.reset({
-        categoryCodePrefix: '',
-        shelfCodePrefix: '',
-        name: '',
-        quantity: '1',
-        stockMinimo: '0',
-        dailySales: '0',
-        category: '',
-        supplier: '',
-        unitPrice: '',
-      });
-
+      resetFormAndState();
       const loadSuppliers = async () => {
         setIsLoadingSuppliers(true);
         try {
@@ -101,7 +101,8 @@ export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemD
       };
       loadSuppliers();
     }
-  }, [open, form, toast]);
+  }, [open, resetFormAndState, toast]);
+
 
   useEffect(() => {
     if (watchedCategoryCodePrefix) {
@@ -115,6 +116,7 @@ export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemD
         form.setValue('category', '', { shouldValidate: true });
     }
   }, [watchedCategoryCodePrefix, form]);
+  
 
   async function onSubmit(values: NewInventoryItemFormValues) {
     setIsSubmitting(true);
@@ -123,25 +125,19 @@ export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemD
       setIsSubmitting(false);
       return;
     }
+    
     const result = await addNewInventoryItemAction(values, user.id);
-    setIsSubmitting(false);
-
+    
     if (result.success && result.item) {
       toast({
         title: 'Artículo Nuevo Añadido',
-        description: `El artículo "${result.item.name}" (Código: ${result.item.code}) se ha añadido correctamente con ${result.item.quantity} unidades.`,
+        description: `El artículo "${result.item.name}" (Código: ${result.item.code}) se ha añadido con ${result.item.quantity} ${result.item.unitName}(s).`,
       });
       onOpenChange(false); 
     } else {
       let errorMessage = result.error || "Ocurrió un error desconocido.";
       if (result.fieldErrors) {
         errorMessage = "Por favor, corrige los errores en el formulario.";
-        if (result.fieldErrors.categoryCodePrefix) {
-          form.setError('categoryCodePrefix', { type: 'manual', message: result.fieldErrors.categoryCodePrefix.join(', ') });
-        }
-        if (result.fieldErrors.shelfCodePrefix) {
-          form.setError('shelfCodePrefix', { type: 'manual', message: result.fieldErrors.shelfCodePrefix.join(', ') });
-        }
       }
       toast({
         title: 'Error al Añadir Artículo',
@@ -149,36 +145,38 @@ export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemD
         variant: 'destructive',
       });
     }
+    setIsSubmitting(false);
   }
   
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => {
-      if (!isOpen) { 
-        form.reset({
-          categoryCodePrefix: '',
-          shelfCodePrefix: '',
-          name: '',
-          quantity: '1',
-          stockMinimo: '0',
-          dailySales: '0',
-          category: '',
-          supplier: '',
-          unitPrice: '',
-        });
-      }
-      onOpenChange(isOpen);
-    }}>
-      <DialogContent className="sm:max-w-md md:max-w-lg bg-popover">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg md:max-w-xl bg-popover">
         <DialogHeader>
           <DialogTitle>Añadir Nuevo Artículo al Inventario</DialogTitle>
           <DialogDescription>
-            Completa los detalles para añadir un nuevo artículo al inventario.
+            Define el producto, su unidad de medida, precio y stock.
           </DialogDescription>
         </DialogHeader>
         
         <div className="py-1 space-y-4 overflow-y-auto max-h-[calc(100vh-200px)] custom-scrollbar pr-2">
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} id="add-item-form" className="space-y-4">
+              <FormField
+                control={form.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Nombre del Artículo</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Ej: Pintura Acrílica Azul - Galón" {...field} />
+                    </FormControl>
+                    <FormDescription>
+                     Nombre descriptivo del producto. Si tiene varias presentaciones (ej: galón, litro), incluye la presentación en el nombre.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
@@ -231,41 +229,88 @@ export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemD
                   </FormItem>
                 )}
               />
-              <FormField
-                control={form.control}
-                name="name"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Nombre del Artículo</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Ej: Martillo de uña" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="quantity"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Cantidad Inicial</FormLabel>
-                    <FormControl>
-                      <Input type="number" placeholder="1" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="unitType"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Tipo de Unidad</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecciona tipo" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="countable">Contable (ej: unidad, pieza, caja)</SelectItem>
+                          <SelectItem value="measurable">Medible (ej: metro, kg, litro)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                 <FormField
+                  control={form.control}
+                  name="unitName"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Nombre de la Unidad de Medida</FormLabel>
+                      <FormControl>
+                        <Input placeholder={watchedUnitType === 'countable' ? "Ej: unidad, pieza" : "Ej: litro, metro"} {...field} />
+                      </FormControl>
+                      <FormDescription>
+                        Ej: pieza, litro, metro, kg, rollo, galón, par, docena, lámina, etc.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="quantity"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Stock de Entrada (en {form.getValues('unitName') || 'unidades'})</FormLabel>
+                      <FormControl>
+                        <Input type="number" placeholder="1" {...field} step={watchedUnitType === 'measurable' ? "0.01" : "1"} />
+                      </FormControl>
+                      <FormDescription>Esta es la cantidad inicial para la 'Nombre de la Unidad de Medida' que definiste arriba. Por ejemplo, si la unidad es 'galón' y aquí ingresas '5', estás añadiendo 5 galones.</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="unitPrice"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Precio Unitario (por {form.getValues('unitName') || 'unidad'})</FormLabel>
+                       <div className="relative">
+                         <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                         <FormControl>
+                          <Input type="number" placeholder="0.00" {...field} step="0.01" className="pl-8"/>
+                        </FormControl>
+                       </div>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
                   name="stockMinimo"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Existencias Mínimas</FormLabel>
+                      <FormLabel>Existencias Mínimas (en {form.getValues('unitName') || 'unidades'})</FormLabel>
                       <FormControl>
-                        <Input type="number" placeholder="0" {...field} />
+                        <Input type="number" placeholder="0" {...field} step="1" />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -276,7 +321,7 @@ export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemD
                   name="dailySales"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Ventas Diarias Prom.</FormLabel>
+                      <FormLabel>Ventas Diarias Prom. (en {form.getValues('unitName') || 'unidades'})</FormLabel>
                       <FormControl>
                         <Input type="number" step="0.1" placeholder="0" {...field} />
                       </FormControl>
@@ -287,25 +332,12 @@ export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemD
               </div>
               <FormField
                 control={form.control}
-                name="unitPrice"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Precio Unitario (Opcional)</FormLabel>
-                    <FormControl>
-                      <Input type="number" step="0.01" placeholder="0.00" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
                 name="supplier"
                 render={({ field }) => ( 
                   <FormItem>
                     <FormLabel>Proveedor (Opcional)</FormLabel>
                     <Select
-                      value={field.value} 
+                      value={field.value || NO_SUPPLIER_OPTION_VALUE} 
                       onValueChange={(valueFromSelect) => {
                         if (valueFromSelect === NO_SUPPLIER_OPTION_VALUE) {
                           field.onChange(''); 
@@ -337,10 +369,12 @@ export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemD
           </Form>
         </div>
         
-        <DialogFooter className="mt-auto pt-4">
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
-            Cancelar
-          </Button>
+        <DialogFooter className="mt-auto pt-6 border-t">
+           <DialogClose asChild>
+                <Button type="button" variant="outline" disabled={isSubmitting}>
+                    Cancelar
+                </Button>
+           </DialogClose>
           <Button type="submit" form="add-item-form" disabled={isSubmitting || isLoadingSuppliers}>
             {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Añadir Artículo

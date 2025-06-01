@@ -1,8 +1,10 @@
 
 import { MongoClient, ObjectId, type Collection, type Db, ServerApiVersion } from 'mongodb';
 import { getDb } from './mongodb';
-import type { AuditLogEntry, InventoryItem, NewInventoryItemFormValues, UpdateStockFormValues, Supplier, User, LoginCredentials, EditInventoryItemFormValues, Customer, CustomerFormValues, Sale, SaleItem, PaymentMethod } from './types';
+import type { AuditLogEntry, InventoryItem, NewInventoryItemFormValues, UpdateStockFormValues, Supplier, User, LoginCredentials, EditInventoryItemFormValues, Customer, CustomerFormValues, Sale, SaleItem, PaymentMethod, UnitType } from './types';
+// SellingUnit type is no longer used here after reversion.
 import { getCategoryNameByCodePrefix } from '@/lib/category-mapping';
+// import { v4 as uuidv4 } from 'uuid'; // No longer needed here
 
 // Define collection names
 const INVENTORY_COLLECTION = 'inventoryItems';
@@ -10,7 +12,7 @@ const SUPPLIERS_COLLECTION = 'suppliers';
 const USERS_COLLECTION = 'users';
 const CUSTOMERS_COLLECTION = 'customers';
 const SALES_COLLECTION = 'sales'; 
-const AUDIT_LOG_COLLECTION = 'auditLogs'; // Added audit log collection
+const AUDIT_LOG_COLLECTION = 'auditLogs'; 
 
 // Helper function to convert MongoDB document to application type
 function mapMongoId<T extends { _id?: ObjectId }>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -31,14 +33,13 @@ export async function addAuditLogInternal(logEntry: Omit<AuditLogEntry, 'id'>): 
     }
   } catch (error) {
     console.error(`[Audit Log Store] Failed to add entry to database for action ${logEntry.actionType} by ${logEntry.actorName}:`, error);
-    // Decide if you want to throw or just log. For audit, probably just log and don't break the main operation.
   }
 }
 
 export async function getAuditLogs(): Promise<AuditLogEntry[]> {
   const db = await getDb();
   const collection = db.collection<Omit<AuditLogEntry, 'id'>>(AUDIT_LOG_COLLECTION);
-  const logsFromDb = await collection.find().sort({ timestamp: -1 }).limit(100).toArray(); // Added limit for performance
+  const logsFromDb = await collection.find().sort({ timestamp: -1 }).limit(100).toArray(); 
   return logsFromDb.map(log => mapMongoId(log as Omit<AuditLogEntry, 'id'> & { _id: ObjectId }));
 }
 
@@ -61,6 +62,8 @@ export async function getInventory(
         { code: { $regex: lowerCaseQuery, $options: 'i' } },
         { category: { $regex: lowerCaseQuery, $options: 'i' } },
         { supplier: { $regex: lowerCaseQuery, $options: 'i' } },
+        { unitName: { $regex: lowerCaseQuery, $options: 'i' } },
+        // Removed sellingUnits search
       ],
     };
   }
@@ -83,7 +86,7 @@ export async function getInventoryItemById(itemId: string): Promise<InventoryIte
 export async function generateNextItemCodeForPrefix(db: Db, categoryPrefix: string, shelfPrefix: string): Promise<string> {
   const collection = db.collection<Omit<InventoryItem, 'id'>>(INVENTORY_COLLECTION);
   const escapedCategoryPrefix = categoryPrefix.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-  const escapedShelfPrefix = shelfPrefix.toUpperCase().replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'); // Standardize to uppercase
+  const escapedShelfPrefix = shelfPrefix.toUpperCase().replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'); 
   const codePrefixPattern = `^${escapedCategoryPrefix}-${escapedShelfPrefix}-`;
 
   const itemsWithPrefix = await collection.find({ code: { $regex: codePrefixPattern } }).sort({ code: -1 }).limit(1).toArray();
@@ -105,7 +108,10 @@ export async function generateNextItemCodeForPrefix(db: Db, categoryPrefix: stri
 
 
 export async function addInventoryItem(
-  itemData: Omit<NewInventoryItemFormValues, 'category' | 'code'> & { categoryCodePrefix: string; shelfCodePrefix: string;}
+  itemData: Omit<NewInventoryItemFormValues, 'category' | 'code'> & { 
+    categoryCodePrefix: string; 
+    shelfCodePrefix: string;
+  }
 ): Promise<{ item?: InventoryItem, error?: string }> {
   const db = await getDb();
   
@@ -122,19 +128,20 @@ export async function addInventoryItem(
   
   const existingItemByFullCode = await db.collection(INVENTORY_COLLECTION).findOne({ code: fullCode });
   if (existingItemByFullCode) {
-    // This case should ideally not be hit if generateNextItemCodeForPrefix works correctly by finding max sequential
     return { error: `Un artículo con el código "${fullCode}" ya existe. Esto es inesperado si la generación secuencial funciona.` };
   }
 
   const newItemToInsert: Omit<InventoryItem, 'id'> = {
     code: fullCode,
     name: itemData.name,
-    quantity: parseInt(itemData.quantity, 10),
+    quantity: parseFloat(itemData.quantity),
+    unitPrice: parseFloat(itemData.unitPrice),
     stockMinimo: parseInt(itemData.stockMinimo, 10),
     dailySales: parseFloat(itemData.dailySales),
     category: categoryNameToSave,
     supplier: itemData.supplier || undefined,
-    unitPrice: itemData.unitPrice ? parseFloat(itemData.unitPrice) : undefined,
+    unitType: itemData.unitType,
+    unitName: itemData.unitName,
     lastUpdated: new Date().toISOString(),
   };
 
@@ -157,11 +164,13 @@ export async function updateInventoryItemDetails(
 
   const updatePayload: any = {};
   if (itemData.name !== undefined) updatePayload.name = itemData.name;
+  if (itemData.unitPrice !== undefined) updatePayload.unitPrice = Number(itemData.unitPrice);
   if (itemData.stockMinimo !== undefined) updatePayload.stockMinimo = Number(itemData.stockMinimo);
   if (itemData.dailySales !== undefined) updatePayload.dailySales = Number(itemData.dailySales);
   if (itemData.category !== undefined) updatePayload.category = itemData.category;
   if (itemData.supplier !== undefined) updatePayload.supplier = itemData.supplier;
-  if (itemData.unitPrice !== undefined) updatePayload.unitPrice = itemData.unitPrice === null ? undefined : Number(itemData.unitPrice);
+  if (itemData.unitType !== undefined) updatePayload.unitType = itemData.unitType;
+  if (itemData.unitName !== undefined) updatePayload.unitName = itemData.unitName;
   
   if (Object.keys(updatePayload).length === 0) {
     const currentItem = await collection.findOne({ _id: new ObjectId(itemId) });
@@ -185,7 +194,7 @@ export async function increaseItemQuantityByCode(code: string, quantityToAdd: nu
   const result = await collection.findOneAndUpdate(
     { code: code },
     {
-      $inc: { quantity: quantityToAdd },
+      $inc: { quantity: quantityToAdd }, 
       $set: { lastUpdated: new Date().toISOString() }
     },
     { returnDocument: 'after' }
@@ -202,7 +211,7 @@ export async function increaseItemQuantityById(itemId: string, quantityToAdd: nu
   const result = await collection.findOneAndUpdate(
     { _id: new ObjectId(itemId) },
     {
-      $inc: { quantity: quantityToAdd },
+      $inc: { quantity: quantityToAdd }, 
       $set: { lastUpdated: new Date().toISOString() }
     },
     { returnDocument: 'after' }
@@ -220,7 +229,7 @@ export async function updateItemQuantity(itemId: string, newQuantity: number): P
     { _id: new ObjectId(itemId) },
     {
       $set: {
-        quantity: newQuantity,
+        quantity: newQuantity, 
         lastUpdated: new Date().toISOString()
       }
     },
@@ -506,18 +515,23 @@ export async function addSale(
   const inventoryCollection = db.collection<Omit<InventoryItem, 'id'> & { _id: ObjectId }>(INVENTORY_COLLECTION);
   const salesCollection = db.collection<Omit<Sale, 'id'>>(SALES_COLLECTION);
 
-  for (const item of saleData.items) {
-    if (!ObjectId.isValid(item.productId)) {
-       return { stockError: `ID de producto inválido: "${item.productId}" para "${item.productName}".` };
+  // --- Stock Validation ---
+  for (const saleItem of saleData.items) {
+    if (!ObjectId.isValid(saleItem.productId)) {
+       return { stockError: `ID de producto inválido: "${saleItem.productId}" para "${saleItem.productName}".` };
     }
-    const product = await inventoryCollection.findOne({ _id: new ObjectId(item.productId) });
+    const product = await inventoryCollection.findOne({ _id: new ObjectId(saleItem.productId) });
     if (!product) {
-      return { stockError: `Producto "${item.productName}" (ID: ${item.productId}) no encontrado en el inventario.` };
+      return { stockError: `Producto "${saleItem.productName}" (ID: ${saleItem.productId}) no encontrado.` };
     }
-    if (product.quantity < item.quantity) {
-      return { stockError: `Stock insuficiente para "${item.productName}". Disponible: ${product.quantity}, Solicitado: ${item.quantity}.` };
+    // For single unit model, conversionToBaseAtSale is effectively 1
+    const quantityInBaseUnitsToDeduct = saleItem.quantitySold; // * 1 (implicit)
+
+    if (product.quantity < quantityInBaseUnitsToDeduct) {
+      return { stockError: `Stock insuficiente para "${product.name}" (en ${product.unitName}). Disponible: ${product.quantity.toFixed(2)}, Solicitado: ${quantityInBaseUnitsToDeduct.toFixed(2)}.` };
     }
   }
+  // --- End Stock Validation ---
 
   let sellerName = 'Usuario Desconocido';
   if (ObjectId.isValid(saleData.userId)) {
@@ -527,19 +541,22 @@ export async function addSale(
     }
   }
   
-  const bulkStockUpdates = saleData.items.map(item => ({
-    updateOne: {
-      filter: { _id: new ObjectId(item.productId) },
-      update: { 
-        $inc: { quantity: -item.quantity },
-        $set: { lastUpdated: new Date().toISOString() }
+  const bulkStockUpdates = saleData.items.map(item => {
+    const quantityToDeduct = item.quantitySold; // No conversion factor needed for single unit model
+    return {
+      updateOne: {
+        filter: { _id: new ObjectId(item.productId) },
+        update: { 
+          $inc: { quantity: -quantityToDeduct }, 
+          $set: { lastUpdated: new Date().toISOString() }
+        },
       },
-    },
-  }));
+    }
+  });
 
   try {
     if (bulkStockUpdates.length > 0) {
-      await inventoryCollection.bulkWrite(bulkStockUpdates);
+      await inventoryCollection.bulkWrite(bulkStockUpdates as any); 
     }
 
     const saleNumber = await generateNextSaleNumber(db);
@@ -566,7 +583,15 @@ export async function addSale(
     }
   } catch (e: any) {
     console.error("Error durante addSale (bulkWrite o insertOne):", e);
-    return { error: `Error al procesar la venta: ${e.message}` };
+    console.warn("Intentando revertir actualizaciones de stock debido a error en la creación de la venta...");
+    for (const saleItem of saleData.items) {
+        const quantityToRestore = saleItem.quantitySold; // No conversion factor
+        await inventoryCollection.updateOne(
+            { _id: new ObjectId(saleItem.productId) },
+            { $inc: { quantity: quantityToRestore } }
+        );
+    }
+    return { error: `Error al procesar la venta: ${e.message}. Se intentó revertir el stock.` };
   }
 }
 
@@ -608,10 +633,12 @@ export async function deleteSaleAndRestoreStock(saleId: string): Promise<{ succe
         console.warn(`Skipping stock restoration for invalid productId: ${item.productId} in sale ${saleId}`);
         continue;
       }
+      const quantityToRestore = item.quantitySold; // No conversion factor for single unit model
+
       const updateResult = await inventoryCollection.findOneAndUpdate(
         { _id: new ObjectId(item.productId) },
         {
-          $inc: { quantity: item.quantity }, 
+          $inc: { quantity: quantityToRestore }, 
           $set: { lastUpdated: new Date().toISOString() }
         },
         { returnDocument: 'after' }
@@ -652,19 +679,16 @@ export async function updateSaleDetails(
     updatePayload.paymentMethod = data.paymentMethod;
   }
   
-  // Handle customerId and customerName carefully
-  if (data.customerId === undefined && data.hasOwnProperty('customerId')) { // If customerId is explicitly passed as undefined (meaning "Consumidor Final")
+  if (data.customerId === undefined && data.hasOwnProperty('customerId')) { 
     updatePayload.customerId = undefined;
     updatePayload.customerName = undefined;
-  } else if (data.customerId) { // If a specific customer is selected
+  } else if (data.customerId) { 
     updatePayload.customerId = data.customerId;
-    if (data.customerName) { // customerName should be passed from the action after fetching it
+    if (data.customerName) { 
          updatePayload.customerName = data.customerName;
     }
   }
-  // If data.customerId is not in data, customer fields are not changed.
-
-  // Check if only lastUpdated is being set (meaning no actual data changes)
+  
   const numKeysToUpdate = Object.keys(updatePayload).length;
   if (numKeysToUpdate === 1 && updatePayload.lastUpdated) {
      const currentSale = await salesCollection.findOne({_id: new ObjectId(saleId)});
@@ -680,4 +704,3 @@ export async function updateSaleDetails(
 
   return result ? mapMongoId(result) : null;
 }
-

@@ -1,7 +1,7 @@
 
 'use client';
 
-import type { InventoryItem, User } from '@/lib/types';
+import type { InventoryItem, User } from '@/lib/types'; // SellingUnit removed
 import {
   Table,
   TableBody,
@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { deleteInventoryItemAction } from '@/lib/actions'; 
 import React, { useState, useMemo, useEffect, useTransition } from 'react';
-import { ArrowUpDown, Save, XCircle, Loader2, Search, Trash2, AlertTriangle, FilePenLine } from 'lucide-react';
+import { ArrowUpDown, Save, XCircle, Loader2, Search, Trash2, AlertTriangle, FilePenLine, DollarSign } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,6 +27,12 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from '@/lib/utils';
 import { EditInventoryItemDialog } from './edit-inventory-item-dialog';
 import { useAuth } from '@/contexts/auth-context';
@@ -112,7 +118,8 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
         item.name.toLowerCase().includes(lowerCaseQuery) ||
         item.code.toLowerCase().includes(lowerCaseQuery) ||
         (item.category && item.category.toLowerCase().includes(lowerCaseQuery)) ||
-        (item.supplier && item.supplier.toLowerCase().includes(lowerCaseQuery))
+        (item.supplier && item.supplier.toLowerCase().includes(lowerCaseQuery)) ||
+        item.unitName.toLowerCase().includes(lowerCaseQuery) 
       );
     }
 
@@ -120,7 +127,7 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
       sortableItems.sort((a, b) => {
         const valA = a[sortConfig.key!];
         const valB = b[sortConfig.key!];
-
+        
         let comparison = 0;
         if (valA === undefined && valB !== undefined) comparison = -1;
         else if (valA !== undefined && valB === undefined) comparison = 1;
@@ -146,24 +153,26 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="ml-2 h-3 w-3"><path d="m6 9 6 6 6-6"/></svg>;
   };
 
+
   if (items.length === 0 && initialItems.length === 0 && !filterQuery) {
      return <p className="text-muted-foreground text-center py-8">Aún no hay artículos en el inventario. ¡Añade algunos para empezar!</p>;
   }
 
   const tableHeaders = [
     { key: 'code', label: 'Código' },
-    { key: 'name', label: 'Nombre' },
-    { key: 'quantity', label: 'Cantidad' },
+    { key: 'name', label: 'Nombre Artículo' },
+    { key: 'quantity', label: 'Stock' },
+    { key: 'unitName', label: 'Unidad' },
+    { key: 'unitPrice', label: 'Precio Unit.' },
     { key: 'stockMinimo', label: 'Stock Mín.' },
-    { key: 'dailySales', label: 'Ventas Diarias' },
+    { key: 'dailySales', label: 'Ventas Diarias Prom.' }, 
     { key: 'category', label: 'Categoría' },
     { key: 'supplier', label: 'Proveedor' },
-    { key: 'unitPrice', label: 'Precio Unit.' },
     { key: 'lastUpdated', label: 'Últ. Act.'}
   ];
 
   return (
-    <>
+    <TooltipProvider>
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-semibold">Inventario Actual</h2>
@@ -183,7 +192,11 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
           <TableHeader>
             <TableRow>
               {tableHeaders.map((col) => (
-                <TableHead key={col.key} className="cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => requestSort(col.key as keyof InventoryItem)}>
+                <TableHead 
+                    key={col.key} 
+                    className="cursor-pointer hover:bg-muted/50 transition-colors" 
+                    onClick={() => requestSort(col.key as keyof InventoryItem )}
+                >
                   <div className="flex items-center">
                     {col.label}
                     {renderSortIcon(col.key as keyof InventoryItem)}
@@ -196,8 +209,8 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
           <TableBody>
             {sortedAndFilteredItems.length > 0 ? (
               sortedAndFilteredItems.map((item) => {
-                const isBelowMinStock = item.quantity <= item.stockMinimo;
                 const isOutOfStock = item.quantity === 0;
+                const isBelowMinStock = item.quantity > 0 && item.quantity <= item.stockMinimo;
 
                 const rowClassName = cn(
                   "hover:bg-muted/50 transition-colors",
@@ -206,29 +219,36 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
                 );
 
                 const quantityCellClassName = cn(
+                  "text-center",
                   isOutOfStock ? "text-red-600 dark:text-red-400 font-bold" :
                   isBelowMinStock ? "text-amber-600 dark:text-amber-400 font-semibold" : ""
                 );
-
+                
                 return (
                   <TableRow key={item.id} className={rowClassName}>
                     <TableCell className="font-mono text-xs">{item.code}</TableCell>
                     <TableCell className="font-medium">{item.name}</TableCell>
                     <TableCell className={quantityCellClassName}>
-                      <div className="flex items-center gap-1">
-                         {isBelowMinStock && <AlertTriangle className={cn("h-4 w-4", isOutOfStock ? "text-red-500" : "text-amber-500")} />}
+                      <div className="flex items-center gap-1 justify-center">
+                         {(isOutOfStock || isBelowMinStock) && <AlertTriangle className={cn("h-4 w-4", isOutOfStock ? "text-red-500" : "text-amber-500")} />}
                          {item.quantity}
                       </div>
                     </TableCell>
-                    <TableCell>{item.stockMinimo}</TableCell>
-                    <TableCell>{item.dailySales}</TableCell>
+                    <TableCell>{item.unitName}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <DollarSign className="h-3 w-3 text-muted-foreground" />
+                        {item.unitPrice.toFixed(2)}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-center">{item.stockMinimo}</TableCell>
+                    <TableCell className="text-center">{item.dailySales}</TableCell>
                     <TableCell>
                       {item.category || 
                         (item.code && getCategoryNameByCodePrefix(item.code.substring(0,2))) || 
                         'N/A'}
                     </TableCell>
                     <TableCell>{item.supplier || 'N/A'}</TableCell>
-                    <TableCell>{item.unitPrice !== undefined ? `$${item.unitPrice.toFixed(2)}` : 'N/A'}</TableCell>
                     <TableCell>{new Date(item.lastUpdated).toLocaleDateString()}</TableCell>
                     {canManageInventory && (
                       <TableCell>
@@ -308,7 +328,7 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
         }}
       />
     )}
-    </>
+    </TooltipProvider>
   );
 }
 

@@ -20,36 +20,15 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
 import { fetchCustomersAction, fetchInventoryItemsForSaleAction, createSaleAction } from '@/lib/actions';
-import type { Customer, InventoryItem, CreateSaleFormValues, SaleItemFormValues, PaymentMethod } from '@/lib/types';
-import { Loader2, PlusCircle, Trash2, ShoppingCart, UserCircleIcon, Search, CreditCard, Landmark, ShieldAlert } from 'lucide-react';
+import type { Customer, InventoryItem, CreateSaleFormValues, PaymentMethod } from '@/lib/types';
+import { Loader2, PlusCircle, Trash2, ShoppingCart, UserCircleIcon, Search, CreditCard, Landmark, ShieldAlert, PackageSearch,ChevronDown } from 'lucide-react';
 import { useAuth } from '@/contexts/auth-context';
 import { useRouter } from 'next/navigation';
 import { FormItem } from '@/components/ui/form';
 import { SimulatedCardPaymentDialog } from '@/components/simulated-card-payment-dialog';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import PageLoading from '@/app/loading';
-
-
-const SaleItemClientSchema = z.object({
-  productId: z.string().min(1, "Debe seleccionar un producto."),
-  productCode: z.string(),
-  productName: z.string(),
-  quantity: z.string().refine(val => {
-    const num = parseInt(val, 10);
-    return !isNaN(num) && num > 0;
-  }, "La cantidad debe ser un número positivo."),
-  unitPriceAtSale: z.number().min(0),
-  availableStock: z.number().min(0),
-}).refine(data => parseInt(data.quantity, 10) <= data.availableStock, {
-  message: "La cantidad no puede exceder el stock disponible.",
-  path: ["quantity"],
-});
-
-const CreateSaleClientSchema = z.object({
-  customerId: z.string().optional(),
-  items: z.array(SaleItemClientSchema).min(1, "Debe añadir al menos un artículo a la venta."),
-  paymentMethod: z.enum(['efectivo', 'tarjeta'], { required_error: "Debe seleccionar un método de pago." }),
-});
+import { CreateSaleClientFormSchema, SaleItemClientFormSchema } from '@/lib/form-schemas';
 
 const NO_CUSTOMER_SELECTED_VALUE = "__NO_CUSTOMER__";
 
@@ -59,18 +38,22 @@ export default function CreateSalePage() {
   const router = useRouter();
   const [isProcessingSale, startTransition] = useTransition();
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [inventoryItems, setInventoryItems] = useState<Pick<InventoryItem, 'id' | 'name' | 'code' | 'quantity' | 'unitPrice'>[]>([]);
+  const [allInventoryItems, setAllInventoryItems] = useState<InventoryItem[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(true);
-  
+
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedProductForForm, setSelectedProductForForm] = useState<Pick<InventoryItem, 'id' | 'name' | 'code' | 'quantity' | 'unitPrice'> | null>(null);
+  const [filteredConceptualProductNames, setFilteredConceptualProductNames] = useState<string[]>([]);
+  const [selectedConceptualName, setSelectedConceptualName] = useState<string | null>(null);
+  const [availablePresentations, setAvailablePresentations] = useState<InventoryItem[]>([]);
+  const [selectedPresentationId, setSelectedPresentationId] = useState<string>('');
+
   const [quantityForSelectedProduct, setQuantityForSelectedProduct] = useState("1");
 
   const [isCardPaymentDialogOpen, setIsCardPaymentDialogOpen] = useState(false);
   const [pendingSaleData, setPendingSaleData] = useState<CreateSaleFormValues | null>(null);
 
   const form = useForm<CreateSaleFormValues>({
-    resolver: zodResolver(CreateSaleClientSchema),
+    resolver: zodResolver(CreateSaleClientFormSchema),
     defaultValues: {
       customerId: NO_CUSTOMER_SELECTED_VALUE,
       items: [],
@@ -98,7 +81,7 @@ export default function CreateSalePage() {
             fetchInventoryItemsForSaleAction(),
           ]);
           setCustomers(fetchedCustomers);
-          setInventoryItems(fetchedInventory);
+          setAllInventoryItems(fetchedInventory as InventoryItem[]);
         } catch (error) {
           console.error("Error al cargar datos iniciales para la venta:", error);
           toast({ title: "Error", description: "No se pudieron cargar los datos necesarios para la venta.", variant: "destructive" });
@@ -111,51 +94,112 @@ export default function CreateSalePage() {
     }
   }, [user, authLoading, router, toast]);
 
-  const filteredInventoryItems = inventoryItems.filter(item =>
-    item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.code.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  useEffect(() => {
+    if (searchTerm.length > 0) {
+      const normalizedSearchTerm = searchTerm.toLowerCase().trim();
+      const nameMap = new Map<string, string>(); // Map: normalizedName -> originalName
+
+      allInventoryItems
+        .filter(item =>
+          item.name.toLowerCase().trim().includes(normalizedSearchTerm) ||
+          item.code.toLowerCase().includes(normalizedSearchTerm) // Assuming code doesn't need trim for search
+        )
+        .forEach(item => {
+          const normalizedItemName = item.name.toLowerCase().trim();
+          if (!nameMap.has(normalizedItemName)) {
+            nameMap.set(normalizedItemName, item.name); // Store the first encountered original casing
+          }
+        });
+      setFilteredConceptualProductNames(Array.from(nameMap.values()));
+    } else {
+      setFilteredConceptualProductNames([]);
+    }
+    setSelectedConceptualName(null);
+    setAvailablePresentations([]);
+    setSelectedPresentationId('');
+  }, [searchTerm, allInventoryItems]);
+
+  useEffect(() => {
+    if (selectedConceptualName) {
+      const normalizedSelectedName = selectedConceptualName.toLowerCase().trim();
+      const presentations = allInventoryItems.filter(
+        item => item.name.toLowerCase().trim() === normalizedSelectedName
+      );
+      setAvailablePresentations(presentations);
+      if (presentations.length === 1) {
+        setSelectedPresentationId(presentations[0].id);
+      } else {
+        setSelectedPresentationId('');
+      }
+    } else {
+      setAvailablePresentations([]);
+      setSelectedPresentationId('');
+    }
+  }, [selectedConceptualName, allInventoryItems]);
+
+
+  const handleConceptualNameSelect = (name: string) => {
+    setSelectedConceptualName(name);
+    setSearchTerm(name); 
+    setFilteredConceptualProductNames([]); 
+    setQuantityForSelectedProduct("1");
+  };
+
+  const getSelectedInventoryItemForForm = (): InventoryItem | null => {
+    if (!selectedPresentationId) return null;
+    return availablePresentations.find(p => p.id === selectedPresentationId) || null;
+  };
 
   const handleAddProductToForm = () => {
-    if (!selectedProductForForm) {
-      toast({ title: "Error", description: "Por favor, seleccione un producto.", variant: "destructive" });
+    const currentSelectedItem = getSelectedInventoryItemForForm();
+    if (!currentSelectedItem) {
+      toast({ title: "Error", description: "Por favor, seleccione un producto y su medida/presentación.", variant: "destructive" });
       return;
     }
-    const quantityNum = parseInt(quantityForSelectedProduct, 10);
+
+    const quantityNum = parseFloat(quantityForSelectedProduct);
     if (isNaN(quantityNum) || quantityNum <= 0) {
       toast({ title: "Error", description: "La cantidad debe ser un número positivo.", variant: "destructive" });
       return;
     }
-    if (quantityNum > selectedProductForForm.quantity) {
-       toast({ title: "Error", description: `Stock insuficiente para ${selectedProductForForm.name}. Disponible: ${selectedProductForForm.quantity}`, variant: "destructive" });
+
+    if (quantityNum > currentSelectedItem.quantity) {
+       toast({ title: "Error", description: `Stock insuficiente para ${selectedConceptualName || currentSelectedItem.name} (${currentSelectedItem.unitName}). Stock disponible: ${currentSelectedItem.quantity} ${currentSelectedItem.unitName}.`, variant: "destructive" });
       return;
     }
 
-    const existingItemIndex = fields.findIndex(field => field.productId === selectedProductForForm.id);
+    const existingItemIndex = fields.findIndex(field =>
+      field.inventoryItemId === currentSelectedItem.id
+    );
+
     if (existingItemIndex !== -1) {
       const existingItem = fields[existingItemIndex];
-      const newQuantity = parseInt(existingItem.quantity, 10) + quantityNum;
-      if (newQuantity > selectedProductForForm.quantity) {
-        toast({ title: "Error", description: `Stock insuficiente para ${selectedProductForForm.name} al sumar con lo ya añadido. Disponible: ${selectedProductForForm.quantity}`, variant: "destructive" });
+      const newQuantityToSell = parseFloat(existingItem.quantityToSell) + quantityNum;
+
+      if (newQuantityToSell > currentSelectedItem.quantity) {
+        toast({ title: "Error", description: `Stock insuficiente para ${selectedConceptualName || currentSelectedItem.name} (${currentSelectedItem.unitName}) al sumar con lo ya añadido. Stock disponible: ${currentSelectedItem.quantity} ${currentSelectedItem.unitName}.`, variant: "destructive" });
         return;
       }
       update(existingItemIndex, {
         ...existingItem,
-        quantity: newQuantity.toString(),
+        quantityToSell: newQuantityToSell.toString(),
       });
     } else {
        append({
-        productId: selectedProductForForm.id,
-        productCode: selectedProductForForm.code,
-        productName: selectedProductForForm.name,
-        quantity: quantityNum.toString(),
-        unitPriceAtSale: selectedProductForForm.unitPrice || 0,
-        availableStock: selectedProductForForm.quantity,
+        inventoryItemId: currentSelectedItem.id,
+        productCode: currentSelectedItem.code,
+        productName: selectedConceptualName || currentSelectedItem.name,
+        unitName: currentSelectedItem.unitName,
+        unitPrice: currentSelectedItem.unitPrice,
+        quantityToSell: quantityNum.toString(),
+        availableStock: currentSelectedItem.quantity,
       });
     }
-    
-    setSelectedProductForForm(null);
+
     setSearchTerm('');
+    setSelectedConceptualName(null);
+    setAvailablePresentations([]);
+    setSelectedPresentationId('');
     setQuantityForSelectedProduct("1");
   };
 
@@ -164,13 +208,9 @@ export default function CreateSalePage() {
       toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario.", variant: "destructive" });
       return;
     }
-     const saleDataToSubmit: CreateSaleFormValues = {
+    const saleDataToSubmit: CreateSaleFormValues = {
       ...saleData,
       customerId: saleData.customerId === NO_CUSTOMER_SELECTED_VALUE ? undefined : saleData.customerId,
-      items: saleData.items.map(item => ({
-        ...item,
-        quantity: item.quantity 
-      }))
     };
 
     startTransition(async () => {
@@ -181,6 +221,11 @@ export default function CreateSalePage() {
           description: `Venta número ${result.sale.saleNumber} guardada.`,
         });
         form.reset();
+        setSearchTerm('');
+        setSelectedConceptualName(null);
+        setAvailablePresentations([]);
+        setSelectedPresentationId('');
+        setQuantityForSelectedProduct("1");
         router.push(`/sales/${result.sale.id}`);
       } else if (result.stockError) {
         toast({
@@ -214,11 +259,13 @@ export default function CreateSalePage() {
     }
   };
 
-
   const totalAmount = fields.reduce((sum, item) => {
-    const quantity = parseInt(item.quantity, 10);
-    return sum + (isNaN(quantity) ? 0 : quantity * item.unitPriceAtSale);
+    const quantity = parseFloat(item.quantityToSell);
+    return sum + (isNaN(quantity) ? 0 : quantity * item.unitPrice);
   }, 0);
+
+  const currentSelectedItemForDisplay = getSelectedInventoryItemForForm();
+
 
   if (authLoading || isLoadingData) {
     return <PageLoading />;
@@ -237,7 +284,7 @@ export default function CreateSalePage() {
       </div>
     );
   }
-  
+
   return (
     <>
     <div className="container mx-auto py-8 px-4 md:px-6 lg:px-8">
@@ -265,7 +312,7 @@ export default function CreateSalePage() {
                     <Select
                       onValueChange={field.onChange}
                       value={field.value || NO_CUSTOMER_SELECTED_VALUE}
-                      disabled={isLoadingData}
+                      disabled={isLoadingData || isProcessingSale}
                     >
                       <SelectTrigger id="customerId">
                         <SelectValue placeholder={isLoadingData ? "Cargando clientes..." : "Seleccionar cliente"} />
@@ -297,6 +344,7 @@ export default function CreateSalePage() {
                       onValueChange={field.onChange as (value: string) => void}
                       defaultValue={field.value}
                       className="flex items-center space-x-4 pt-2"
+                      disabled={isProcessingSale}
                     >
                       <FormItem className="flex items-center space-x-2">
                         <RadioGroupItem value="efectivo" id="efectivo" />
@@ -317,70 +365,108 @@ export default function CreateSalePage() {
               </div>
             </div>
 
+            {true && (
             <Card className="bg-muted/30 p-4">
               <CardHeader className="p-2 pb-3">
-                <CardTitle className="text-xl">Añadir Artículos</CardTitle>
+                <CardTitle className="text-xl flex items-center gap-2">
+                  <PackageSearch className="h-6 w-6"/>
+                  Añadir Artículos
+                </CardTitle>
               </CardHeader>
               <CardContent className="p-2 space-y-3">
                 <div className="space-y-1">
-                  <Label htmlFor="productSearch">Buscar Producto</Label>
+                  <Label htmlFor="productSearch">Buscar Producto por Nombre o Código</Label>
                   <div className="relative">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
                       id="productSearch"
-                      placeholder="Buscar por nombre o código..."
+                      placeholder="Buscar..."
                       value={searchTerm}
-                      onChange={(e) => {
-                        setSearchTerm(e.target.value);
-                        if (selectedProductForForm && e.target.value === '') setSelectedProductForForm(null);
-                      }}
+                      onChange={(e) => setSearchTerm(e.target.value)}
                       className="pl-8"
-                      disabled={isLoadingData}
+                      disabled={isLoadingData || isProcessingSale}
                     />
                   </div>
                 </div>
 
-                {searchTerm && filteredInventoryItems.length > 0 && !selectedProductForForm && (
-                  <div className="max-h-40 overflow-y-auto border rounded-md bg-background">
-                    {filteredInventoryItems.map(item => (
-                      <div 
-                        key={item.id} 
-                        className="p-2 hover:bg-accent cursor-pointer"
-                        onClick={() => {
-                          setSelectedProductForForm(item);
-                          setSearchTerm(item.name); 
-                        }}
+                {searchTerm && filteredConceptualProductNames.length > 0 && !selectedConceptualName && (
+                  <div className="max-h-40 overflow-y-auto border rounded-md bg-background shadow-md">
+                    {filteredConceptualProductNames.map(name => (
+                      <div
+                        key={name}
+                        className="p-2 hover:bg-accent hover:text-accent-foreground cursor-pointer"
+                        onClick={() => handleConceptualNameSelect(name)}
                       >
-                        {item.name} ({item.code}) - Stock: {item.quantity} - Precio: ${item.unitPrice?.toFixed(2) || 'N/A'}
+                        {name}
                       </div>
                     ))}
                   </div>
                 )}
+
+                {selectedConceptualName && availablePresentations.length > 1 && (
+                  <div className="space-y-1">
+                    <Label htmlFor="presentationSelect">Seleccionar Medida/Presentación</Label>
+                    <Select
+                      value={selectedPresentationId}
+                      onValueChange={setSelectedPresentationId}
+                      disabled={isProcessingSale}
+                    >
+                      <SelectTrigger id="presentationSelect">
+                        <SelectValue placeholder={"Elige una medida/presentación..."} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availablePresentations.map(item => (
+                          <SelectItem key={item.id} value={item.id}>
+                            {item.unitName} (Stock: {item.quantity}, Precio: ${item.unitPrice.toFixed(2)})
+                            {item.code && <span className="text-xs text-muted-foreground ml-2"> - {item.code}</span>}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 
-                {selectedProductForForm && (
-                   <div className="p-3 border rounded-md bg-green-50 dark:bg-green-900/30">
-                     <p className="font-semibold text-green-700 dark:text-green-300">Producto Seleccionado: {selectedProductForForm.name}</p>
-                     <p className="text-xs text-muted-foreground">Código: {selectedProductForForm.code} | Stock Actual: {selectedProductForForm.quantity} | Precio Unit.: ${selectedProductForForm.unitPrice?.toFixed(2)}</p>
-                   </div>
+                {selectedConceptualName && availablePresentations.length === 1 && availablePresentations[0].id === selectedPresentationId && (
+                     <div className="space-y-1">
+                        <Label>Medida/Presentación</Label>
+                        <Input 
+                            value={`${availablePresentations[0].unitName} (Stock: ${availablePresentations[0].quantity}, Precio: $${availablePresentations[0].unitPrice.toFixed(2)})`} 
+                            readOnly 
+                            className="bg-muted/50 border-input"
+                        />
+                    </div>
+                )}
+
+
+                {currentSelectedItemForDisplay && (
+                  <div className="p-3 border rounded-md bg-green-50 dark:bg-green-900/30 space-y-2">
+                     <p className="font-semibold text-green-700 dark:text-green-300">
+                       Producto Seleccionado: {selectedConceptualName || currentSelectedItemForDisplay.name} - {currentSelectedItemForDisplay.unitName}
+                     </p>
+                     <p className="text-xs text-muted-foreground">
+                       Código: {currentSelectedItemForDisplay.code} | Stock Actual: {currentSelectedItemForDisplay.quantity} {currentSelectedItemForDisplay.unitName} | Precio: ${currentSelectedItemForDisplay.unitPrice.toFixed(2)} / {currentSelectedItemForDisplay.unitName}
+                     </p>
+                  </div>
                 )}
 
                 <div className="flex items-end gap-3">
                   <div className="flex-grow space-y-1">
-                    <Label htmlFor="quantityForSelectedProduct">Cantidad</Label>
+                    <Label htmlFor="quantityForSelectedProduct">Cantidad (en {currentSelectedItemForDisplay?.unitName || 'unidad'})</Label>
                     <Input
                       id="quantityForSelectedProduct"
                       type="number"
                       value={quantityForSelectedProduct}
                       onChange={(e) => setQuantityForSelectedProduct(e.target.value)}
-                      min="1"
-                      disabled={!selectedProductForForm}
+                      min="0.01"
+                      step="any"
+                      disabled={!currentSelectedItemForDisplay || isProcessingSale}
                       className="w-full"
                     />
                   </div>
-                  <Button 
-                    type="button" 
-                    onClick={handleAddProductToForm} 
-                    disabled={!selectedProductForForm || isProcessingSale}
+                  <Button
+                    type="button"
+                    onClick={handleAddProductToForm}
+                    disabled={!currentSelectedItemForDisplay || isProcessingSale}
                     variant="outline"
                     className="h-10"
                   >
@@ -389,8 +475,9 @@ export default function CreateSalePage() {
                 </div>
               </CardContent>
             </Card>
+            )}
 
-            {fields.length > 0 && (
+            {fields.length > 0 ? (
               <div className="space-y-2">
                 <h3 className="text-lg font-semibold">Artículos en esta Venta</h3>
                 <div className="rounded-md border">
@@ -398,53 +485,84 @@ export default function CreateSalePage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Producto</TableHead>
-                        <TableHead className="text-center">Cantidad</TableHead>
-                        <TableHead className="text-right">Precio Unit.</TableHead>
-                        <TableHead className="text-right">Subtotal</TableHead>
-                        <TableHead className="text-center">Acción</TableHead>
+                        <TableHead className="w-[100px]">Cód.</TableHead>
+                        <TableHead className="w-[120px] text-center">Unidad</TableHead>
+                        <TableHead className="w-[100px] text-right">P. Unit.</TableHead>
+                        <TableHead className="w-[100px] text-center">Cantidad</TableHead>
+                        <TableHead className="w-[100px] text-right">Subtotal</TableHead>
+                        <TableHead className="w-[50px]"></TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {fields.map((item, index) => (
-                        <TableRow key={item.id}>
-                          <TableCell>
-                            {item.productName} <span className="text-xs text-muted-foreground">({item.productCode})</span>
-                          </TableCell>
-                          <TableCell className="text-center">{item.quantity}</TableCell>
-                          <TableCell className="text-right">${item.unitPriceAtSale.toFixed(2)}</TableCell>
-                          <TableCell className="text-right">${(parseFloat(item.quantity) * item.unitPriceAtSale).toFixed(2)}</TableCell>
-                          <TableCell className="text-center">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="text-destructive hover:text-destructive/80 h-7 w-7"
-                              onClick={() => remove(index)}
-                              disabled={isProcessingSale}
-                              title="Eliminar artículo"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {fields.map((field, index) => {
+                        const quantityNum = parseFloat(field.quantityToSell);
+                        const subtotal = isNaN(quantityNum) ? 0 : quantityNum * field.unitPrice;
+                        return (
+                          <TableRow key={field.id}>
+                            <TableCell>{field.productName}</TableCell>
+                            <TableCell className="font-mono text-xs">{field.productCode}</TableCell>
+                            <TableCell className="text-center">{field.unitName}</TableCell>
+                            <TableCell className="text-right">${field.unitPrice.toFixed(2)}</TableCell>
+                            <TableCell className="text-center">
+                              <Controller
+                                control={form.control}
+                                name={`items.${index}.quantityToSell`}
+                                render={({ field: qtyField }) => (
+                                  <Input
+                                    {...qtyField}
+                                    type="number"
+                                    className="w-20 text-center mx-auto h-8"
+                                    min="0.01"
+                                    step="any"
+                                    onChange={(e) => {
+                                        const newQty = parseFloat(e.target.value);
+                                        const itemInArray = form.getValues(`items.${index}`);
+                                        if (newQty > itemInArray.availableStock) {
+                                            toast({ title: "Stock Insuficiente", description: `No puedes vender más de ${itemInArray.availableStock} ${itemInArray.unitName} de ${itemInArray.productName}.`, variant: "destructive"});
+                                            qtyField.onChange(itemInArray.availableStock.toString());
+                                        } else {
+                                            qtyField.onChange(e.target.value);
+                                        }
+                                    }}
+                                    disabled={isProcessingSale}
+                                  />
+                                )}
+                              />
+                            </TableCell>
+                            <TableCell className="text-right">${subtotal.toFixed(2)}</TableCell>
+                            <TableCell>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="text-destructive hover:text-destructive/80 h-7 w-7"
+                                onClick={() => remove(index)}
+                                disabled={isProcessingSale}
+                                title="Eliminar artículo"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </div>
-                 {form.formState.errors.items && !form.formState.errors.items.message && Array.isArray(form.formState.errors.items) && (
-                  form.formState.errors.items.map((itemError, index) => (
-                    itemError && itemError.quantity && (
-                      <p key={`item-err-${index}`} className="text-sm font-medium text-destructive pt-1">
-                        Error en Artículo "{fields[index]?.productName}": {itemError.quantity.message}
-                      </p>
-                    )
-                  ))
+                {form.formState.errors.items && typeof form.formState.errors.items === 'object' && !Array.isArray(form.formState.errors.items) && (form.formState.errors.items as any).root?.message && (
+                    <p className="text-sm font-medium text-destructive">{(form.formState.errors.items as any).root.message}</p>
                 )}
-                {form.formState.errors.items && form.formState.errors.items.message && (
-                     <p className="text-sm font-medium text-destructive pt-1">{form.formState.errors.items.message}</p>
-                )}
+                {Array.isArray(form.formState.errors.items) && form.formState.errors.items.map((error, index) => (
+                    error && error.quantityToSell && <p key={index} className="text-sm font-medium text-destructive">Error en artículo {index + 1}: {error.quantityToSell.message}</p>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center text-muted-foreground py-4">
+                <p>No hay artículos en esta venta todavía.</p>
+                <p className="text-sm">Utilice la sección de búsqueda de arriba para añadir productos.</p>
               </div>
             )}
+
 
             <div className="pt-4 text-right">
               <p className="text-2xl font-bold">Total de la Venta: <span className="text-primary">${totalAmount.toFixed(2)}</span></p>

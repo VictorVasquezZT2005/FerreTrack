@@ -4,6 +4,7 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { ObjectId } from 'mongodb';
+// import { v4 as uuidv4 } from 'uuid'; // No longer needed for sellingUnits IDs here
 import {
   addInventoryItem as dbAddInventoryItem,
   getInventory as dbGetInventory,
@@ -34,8 +35,8 @@ import {
   addAuditLogInternal, // For internal use by logAuditAction
   getAuditLogs as dbGetAuditLogs, // For fetching logs
 } from './store';
-import type { AuditLogEntry, InventoryItem, NewInventoryItemFormValues, UpdateStockFormValues, Supplier, SupplierFormValues, User, UserFormValues, LoginCredentials, EditInventoryItemFormValues, Customer, CustomerFormValues, CreateSaleFormValues, SaleItemFormValues, Sale, SaleItem, PaymentMethod, EditSaleFormValues } from './types';
-
+import type { AuditLogEntry, InventoryItem, NewInventoryItemFormValues, UpdateStockFormValues, Supplier, SupplierFormValues, User, UserFormValues, LoginCredentials, EditInventoryItemFormValues, Customer, CustomerFormValues, CreateSaleFormValues, SaleItemFormValues, Sale, SaleItem, PaymentMethod, UnitType } from './types';
+// SellingUnit type is no longer used directly in actions layer after reversion.
 
 const NO_CUSTOMER_SELECTED_VALUE = "__NO_CUSTOMER__"; // Matches the value used in client-side Selects
 
@@ -45,6 +46,7 @@ export async function logAuditAction(
   actionType: string,
   details: Record<string, any> = {}
 ) {
+  console.log(`[logAuditAction] Called with actorUserId: ${actorUserId}, actionType: ${actionType}`);
   let actorName = 'Usuario Desconocido';
   let actorRole: User['rol'] | 'Desconocido' = 'Desconocido';
 
@@ -54,11 +56,12 @@ export async function logAuditAction(
       if (actor) {
         actorName = actor.nombre;
         actorRole = actor.rol;
+        console.log(`[logAuditAction] Actor details fetched: Name=${actorName}, Role=${actorRole}`);
       } else {
         console.warn(`[logAuditAction] Actor user not found for ID: ${actorUserId}. Logging with default actor info.`);
       }
-    } catch (fetchError) {
-      console.error(`[logAuditAction] Error fetching actor details for ID ${actorUserId}:`, fetchError);
+    } catch (fetchError: any) {
+      console.error(`[logAuditAction] Error fetching actor details for ID ${actorUserId}:`, fetchError.message);
       // Proceed with default actor info
     }
   } else {
@@ -77,9 +80,8 @@ export async function logAuditAction(
   console.log('[logAuditAction] Attempting to log audit entry:', JSON.stringify(logEntryData, null, 2));
   try {
     await addAuditLogInternal(logEntryData);
-  } catch (error) {
-    console.error('[logAuditAction] Failed to create audit log entry via addAuditLogInternal:', error);
-    // We don't want a logging failure to break the primary action, so we just log the error here.
+  } catch (error: any) {
+    console.error('[logAuditAction] Failed to create audit log entry via addAuditLogInternal:', error.message);
   }
 }
 
@@ -88,32 +90,39 @@ export async function fetchAuditLogsAction(): Promise<{ success: boolean; logs?:
     const logs = await dbGetAuditLogs();
     return { success: true, logs };
   } catch (error: any) {
-    console.error("Error fetching audit logs (action layer):", error);
+    console.error("Error fetching audit logs (action layer):", error.message);
     return { success: false, error: "No se pudo cargar la bitácora debido a un error interno del servidor." };
   }
 }
 
 
 // --- Inventory Schemas and Actions ---
+
+// SellingUnitServerSchema is removed
+
 const NewInventoryItemServerSchema = z.object({
   categoryCodePrefix: z.string().length(2, "El código de categoría debe tener 2 dígitos."),
   shelfCodePrefix: z.string().length(2, "El código de estante debe tener 2 caracteres.").regex(/^[a-zA-Z0-9]{2}$/, "El código de estante debe ser alfanumérico de 2 caracteres."),
   name: z.string().min(3, "El nombre debe tener al menos 3 caracteres."),
-  quantity: z.coerce.number().int().min(0, "La cantidad inicial debe ser un entero no negativo."),
+  quantity: z.coerce.number().min(0, "La cantidad debe ser un número no negativo."),
+  unitPrice: z.coerce.number().min(0, "El precio unitario debe ser un número no negativo."),
   stockMinimo: z.coerce.number().int().min(0, "Las existencias mínimas deben ser un entero no negativo."),
   dailySales: z.coerce.number().min(0, "Las ventas diarias deben ser un número no negativo."),
   supplier: z.string().optional().transform(val => val === '' ? undefined : val),
-  unitPrice: z.coerce.number().min(0, "El precio unitario debe ser un número no negativo.").optional().nullable().transform(val => val === null ? undefined : val),
+  unitType: z.enum(['countable', 'measurable']),
+  unitName: z.string().min(1, "El nombre de la unidad es obligatorio."),
 });
 
 const EditInventoryItemServerSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().min(1), // ID of the inventory item itself
   name: z.string().min(3, "El nombre debe tener al menos 3 caracteres."),
+  unitPrice: z.coerce.number().min(0, "El precio unitario debe ser un número no negativo."),
   stockMinimo: z.coerce.number().int().min(0, "Las existencias mínimas deben ser un entero no negativo."),
   dailySales: z.coerce.number().min(0, "Las ventas diarias deben ser un número no negativo."),
   category: z.string().optional().transform(val => val === '' ? undefined : val),
   supplier: z.string().optional().transform(val => val === '' ? undefined : val),
-  unitPrice: z.coerce.number().min(0, "El precio unitario debe ser un número no negativo.").optional().nullable().transform(val => val === null ? undefined : val),
+  unitType: z.enum(['countable', 'measurable']),
+  unitName: z.string().min(1, "El nombre de la unidad es obligatorio."),
 });
 
 const CODE_REGEX_FOR_UPDATE_SERVER = /^\d{2}-[a-zA-Z0-9]{2}-\d{5}$/;
@@ -121,7 +130,7 @@ const CODE_ERROR_MESSAGE_FOR_UPDATE_SERVER = "El código debe tener el formato C
 
 const UpdateStockServerSchema = z.object({
   code: z.string().regex(CODE_REGEX_FOR_UPDATE_SERVER, CODE_ERROR_MESSAGE_FOR_UPDATE_SERVER).min(1, "El código del artículo es requerido."),
-  quantityToAdd: z.coerce.number().int().gt(0, "La cantidad a añadir debe ser un entero positivo."),
+  quantityToAdd: z.coerce.number().gt(0, "La cantidad a añadir debe ser un número positivo."),
 });
 
 export async function fetchInventoryItems(
@@ -132,33 +141,28 @@ export async function fetchInventoryItems(
   return dbGetInventory(sortField, sortOrder, filterQuery);
 }
 
-export async function fetchInventoryItemsForSaleAction(): Promise<Pick<InventoryItem, 'id' | 'name' | 'code' | 'quantity' | 'unitPrice'>[]> {
+export async function fetchInventoryItemsForSaleAction(): Promise<InventoryItem[]> {
   const items = await dbGetInventory('name', 'asc');
-  return items.map(item => ({
-    id: item.id,
-    name: item.name,
-    code: item.code,
-    quantity: item.quantity,
-    unitPrice: item.unitPrice,
-  }));
+  return items;
 }
 
 export async function addNewInventoryItemAction(
-  formData: Omit<NewInventoryItemFormValues, 'category'>,
+  formData: NewInventoryItemFormValues, // Reverted to NewInventoryItemFormValues
   actorUserId: string
 ) {
   const validatedFields = NewInventoryItemServerSchema.safeParse(formData);
 
   if (!validatedFields.success) {
+    console.error("Server validation errors (addNewInventoryItemAction):", JSON.stringify(validatedFields.error.flatten(), null, 2));
     return {
       success: false,
       error: "Falló la validación del servidor",
       fieldErrors: validatedFields.error.flatten().fieldErrors,
     };
   }
-  
+
   const itemDataForDb = { ...validatedFields.data };
-  
+
   try {
     const result = await dbAddInventoryItem(itemDataForDb);
 
@@ -175,6 +179,10 @@ export async function addNewInventoryItemAction(
         itemName: result.item.name,
         itemCode: result.item.code,
         initialQuantity: result.item.quantity,
+        unitName: result.item.unitName,
+        unitPrice: result.item.unitPrice,
+        stockMinimo: result.item.stockMinimo,
+        dailySales: result.item.dailySales,
       });
       return { success: true, item: result.item };
     }
@@ -187,30 +195,24 @@ export async function addNewInventoryItemAction(
 
 export async function updateInventoryItemDetailsAction(
   itemId: string,
-  formData: EditInventoryItemFormValues,
+  formData: EditInventoryItemFormValues, // Reverted to EditInventoryItemFormValues
   actorUserId: string
 ) {
-  const validatedFields = EditInventoryItemServerSchema.omit({id: true}).safeParse(formData);
+  const validatedFields = EditInventoryItemServerSchema.safeParse(formData); 
 
   if (!validatedFields.success) {
+    console.error("Server validation errors (updateInventoryItemDetailsAction):", JSON.stringify(validatedFields.error.flatten(), null, 2));
     return {
       success: false,
       error: "Falló la validación del servidor para editar el artículo.",
       fieldErrors: validatedFields.error.flatten().fieldErrors,
     };
   }
-
-  const itemDetailsToUpdate = {
-    name: validatedFields.data.name,
-    stockMinimo: validatedFields.data.stockMinimo,
-    dailySales: validatedFields.data.dailySales,
-    category: validatedFields.data.category,
-    supplier: validatedFields.data.supplier,
-    unitPrice: validatedFields.data.unitPrice,
-  };
+  
+  const { id, ...itemDetailsToUpdate } = validatedFields.data;
 
   try {
-    const originalItem = await dbGetInventoryItemById(itemId); // Get original for logging
+    const originalItem = await dbGetInventoryItemById(itemId);
     if (!originalItem) {
         return { success: false, error: "Artículo original no encontrado para la bitácora." };
     }
@@ -221,8 +223,11 @@ export async function updateInventoryItemDetailsAction(
         itemId: updatedItem.id,
         itemName: updatedItem.name,
         itemCode: updatedItem.code,
-        changes: formData, // Log what was attempted to change
-        originalName: originalItem.name
+        changes: itemDetailsToUpdate,
+        originalName: originalItem.name,
+        originalUnitPrice: originalItem.unitPrice,
+        originalStockMinimo: originalItem.stockMinimo,
+        originalUnitName: originalItem.unitName,
       });
       return { success: true, item: updatedItem };
     } else {
@@ -251,78 +256,49 @@ export async function increaseStockByCodeAction(
   const { code, quantityToAdd } = validatedFields.data;
 
   try {
-    const originalItem = await dbGetInventory().then(items => items.find(i => i.code === code)); // For logging
+    const originalItem = await dbGetInventory().then(items => items.find(i => i.code === code));
     const updatedItem = await dbIncreaseItemQuantityByCode(code, quantityToAdd);
-    if (updatedItem) {
+    if (updatedItem && originalItem) {
       revalidatePath('/inventory');
       await logAuditAction(actorUserId, 'INCREASE_STOCK', {
         itemCode: updatedItem.code,
         itemName: updatedItem.name,
         quantityAdded: quantityToAdd,
         newQuantity: updatedItem.quantity,
-        originalQuantity: originalItem?.quantity,
+        originalQuantity: originalItem.quantity,
+        unitName: updatedItem.unitName,
       });
       return { success: true, item: updatedItem };
-    } else {
-      return {
-        success: false,
-        error: `No se encontró ningún artículo con el código "${code}".`,
-        fieldErrors: { code: [`No se encontró ningún artículo con el código "${code}".`] }
-      };
+    } else if (!updatedItem) { 
+        return {
+            success: false,
+            error: `No se encontró ningún artículo con el código "${code}".`,
+            fieldErrors: { code: [`No se encontró ningún artículo con el código "${code}".`] }
+        };
+    } else { 
+        return { success: false, error: "Error al actualizar el stock, o artículo original no encontrado." };
     }
   } catch (error: any) {
-    console.error("Error actualizando cantidad por código:", error);
-    return { success: false, error: error.message || "Error al actualizar la cantidad del artículo." };
-  }
-}
-
-export async function updateInventoryItemQuantityAction(
-  itemId: string,
-  newQuantity: number,
-  actorUserId: string // Added for audit logging
-) {
-  if (typeof newQuantity !== 'number' || newQuantity < 0) {
-    return { success: false, error: "Cantidad inválida." };
-  }
-  try {
-    const originalItem = await dbGetInventoryItemById(itemId);
-    const updatedItem = await dbUpdateItemQuantity(itemId, newQuantity);
-    if (updatedItem && originalItem) {
-      revalidatePath('/inventory');
-      await logAuditAction(actorUserId, 'UPDATE_ITEM_QUANTITY', {
-        itemId: updatedItem.id,
-        itemName: updatedItem.name,
-        itemCode: updatedItem.code,
-        newQuantity: updatedItem.quantity,
-        oldQuantity: originalItem.quantity,
-      });
-      return { success: true, item: updatedItem };
-    }
-    return { success: false, error: "Artículo no encontrado o no se pudo obtener información original." };
-  } catch (error: any) {
-    console.error("Error actualizando cantidad:", error);
-    return { success: false, error: error.message || "Error al actualizar la cantidad del artículo." };
+    console.error("Error al incrementar stock por código:", error);
+    return { success: false, error: error.message || "Error al incrementar el stock." };
   }
 }
 
 export async function deleteInventoryItemAction(
-  itemId: string,
-  itemName: string, // Added for audit logging
-  itemCode: string, // Added for audit logging
-  actorUserId: string // Added for audit logging
+    itemId: string,
+    itemName: string,
+    itemCode: string,
+    actorUserId: string
 ) {
   try {
-    const success = await dbDeleteInventoryItem(itemId);
-    if (success) {
+    const deleted = await dbDeleteInventoryItem(itemId);
+    if (deleted) {
       revalidatePath('/inventory');
-      await logAuditAction(actorUserId, 'DELETE_ITEM', {
-        itemId,
-        itemName,
-        itemCode,
-      });
+      await logAuditAction(actorUserId, 'DELETE_ITEM', { itemId, itemName, itemCode });
       return { success: true };
+    } else {
+      return { success: false, error: "Artículo no encontrado o no se pudo eliminar." };
     }
-    return { success: false, error: "No se pudo eliminar el artículo o no fue encontrado." };
   } catch (error: any) {
     console.error("Error eliminando artículo de inventario:", error);
     return { success: false, error: error.message || "Error al eliminar el artículo del inventario." };
@@ -331,43 +307,45 @@ export async function deleteInventoryItemAction(
 
 // --- Supplier Schemas and Actions ---
 const SupplierServerSchema = z.object({
-  name: z.string().min(2, "El nombre del proveedor debe tener al menos 2 caracteres."),
+  name: z.string().min(2, "El nombre debe tener al menos 2 caracteres."),
   telefono: z.string().optional().transform(val => val === '' ? undefined : val),
-  email: z.string().email("Email inválido.").optional().transform(val => val === '' ? undefined : val),
+  email: z.string().email("Introduce un email válido.").optional().transform(val => val === '' ? undefined : val),
   contacto: z.string().optional().transform(val => val === '' ? undefined : val),
-  productos_suministrados_string: z.string().optional().transform(val => val === '' ? undefined : val),
+  productos_suministrados_string: z.string().optional(),
 });
+
 
 export async function fetchSuppliersAction(): Promise<Supplier[]> {
   return dbGetSuppliers();
 }
 
 export async function addNewSupplierAction(
-  formData: SupplierFormValues,
+  formData: Omit<SupplierFormValues, 'id'>,
   actorUserId: string
 ) {
   const validatedFields = SupplierServerSchema.safeParse(formData);
-
   if (!validatedFields.success) {
     return {
       success: false,
-      error: "Falló la validación del servidor para el proveedor",
+      error: "Falló la validación del servidor",
       fieldErrors: validatedFields.error.flatten().fieldErrors,
     };
   }
 
   const { productos_suministrados_string, ...restOfData } = validatedFields.data;
-  const productos_suministrados = productos_suministrados_string
-    ? productos_suministrados_string.split(',').map(s => s.trim()).filter(s => s !== '')
+  const productos_suministrados_array = productos_suministrados_string
+    ? productos_suministrados_string.split(',').map(p => p.trim()).filter(p => p !== '')
     : [];
 
+  const supplierDataForDb = {
+    ...restOfData,
+    productos_suministrados: productos_suministrados_array,
+  };
+
   try {
-    const newSupplier = await dbAddSupplier({ ...restOfData, productos_suministrados });
+    const newSupplier = await dbAddSupplier(supplierDataForDb);
     revalidatePath('/suppliers');
-    await logAuditAction(actorUserId, 'CREATE_SUPPLIER', {
-      supplierId: newSupplier.id,
-      supplierName: newSupplier.name,
-    });
+    await logAuditAction(actorUserId, 'CREATE_SUPPLIER', { supplierId: newSupplier.id, supplierName: newSupplier.name });
     return { success: true, supplier: newSupplier };
   } catch (error: any) {
     console.error("Error añadiendo proveedor:", error);
@@ -377,33 +355,33 @@ export async function addNewSupplierAction(
 
 export async function updateSupplierAction(
   supplierId: string,
-  formData: SupplierFormValues,
+  formData: Omit<SupplierFormValues, 'id'>,
   actorUserId: string
 ) {
   const validatedFields = SupplierServerSchema.safeParse(formData);
-
   if (!validatedFields.success) {
     return {
       success: false,
-      error: "Falló la validación del servidor para actualizar el proveedor.",
+      error: "Falló la validación del servidor para editar proveedor",
       fieldErrors: validatedFields.error.flatten().fieldErrors,
     };
   }
 
   const { productos_suministrados_string, ...restOfData } = validatedFields.data;
-  const productos_suministrados = productos_suministrados_string
-    ? productos_suministrados_string.split(',').map(s => s.trim()).filter(s => s !== '')
+  const productos_suministrados_array = productos_suministrados_string
+    ? productos_suministrados_string.split(',').map(p => p.trim()).filter(p => p !== '')
     : [];
 
+  const supplierDataForDb = {
+    ...restOfData,
+    productos_suministrados: productos_suministrados_array,
+  };
+
   try {
-    const updatedSupplier = await dbUpdateSupplier(supplierId, { ...restOfData, productos_suministrados });
+    const updatedSupplier = await dbUpdateSupplier(supplierId, supplierDataForDb);
     if (updatedSupplier) {
       revalidatePath('/suppliers');
-      await logAuditAction(actorUserId, 'UPDATE_SUPPLIER', {
-        supplierId: updatedSupplier.id,
-        supplierName: updatedSupplier.name,
-        changes: formData
-      });
+      await logAuditAction(actorUserId, 'UPDATE_SUPPLIER', { supplierId: updatedSupplier.id, supplierName: updatedSupplier.name, changes: formData });
       return { success: true, supplier: updatedSupplier };
     } else {
       return { success: false, error: "Proveedor no encontrado o no se pudo actualizar." };
@@ -415,35 +393,47 @@ export async function updateSupplierAction(
 }
 
 export async function deleteSupplierAction(
-  supplierId: string,
-  supplierName: string, // Added for audit logging
-  actorUserId: string // Added for audit logging
+    supplierId: string,
+    supplierName: string,
+    actorUserId: string
 ) {
   try {
-    const success = await dbDeleteSupplier(supplierId);
-    if (success) {
+    const deleted = await dbDeleteSupplier(supplierId);
+    if (deleted) {
       revalidatePath('/suppliers');
-      await logAuditAction(actorUserId, 'DELETE_SUPPLIER', {
-        supplierId,
-        supplierName,
-      });
+      await logAuditAction(actorUserId, 'DELETE_SUPPLIER', { supplierId, supplierName });
       return { success: true };
+    } else {
+      return { success: false, error: "Proveedor no encontrado o no se pudo eliminar." };
     }
-    return { success: false, error: "No se pudo eliminar el proveedor o no fue encontrado." };
   } catch (error: any) {
     console.error("Error eliminando proveedor:", error);
     return { success: false, error: error.message || "Error al eliminar el proveedor." };
   }
 }
 
+
 // --- User Schemas and Actions ---
 const UserServerSchema = z.object({
   id: z.string().optional(),
   nombre: z.string().min(2, "El nombre debe tener al menos 2 caracteres."),
-  email: z.string().email("Email de usuario inválido."),
-  rol: z.enum(['admin', 'empleado', 'inventory_manager'], { required_error: 'Debes seleccionar un rol.' }),
-  password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres.").optional(),
+  email: z.string().email("Introduce un email válido."),
+  rol: z.enum(['admin', 'empleado', 'inventory_manager']),
+  password: z.string().optional(),
+})
+.refine(data => {
+  if (!data.id && (!data.password || data.password.length < 6)) {
+    return false;
+  }
+  if (data.password && data.password.length > 0 && data.password.length < 6) {
+    return false;
+  }
+  return true;
+}, {
+  message: "La contraseña debe tener al menos 6 caracteres si se proporciona. Es obligatoria para nuevos usuarios.",
+  path: ["password"],
 });
+
 
 export async function fetchUsersAction(): Promise<Omit<User, 'password'>[]> {
   return dbGetUsers();
@@ -453,49 +443,36 @@ export async function addNewUserAction(
   formData: UserFormValues,
   actorUserId: string
 ) {
-  const AddUserServerSchema = UserServerSchema.extend({
-    password: z.string().min(6, "La contraseña es obligatoria y debe tener al menos 6 caracteres."),
-  }).omit({id: true});
-
-  const validatedFields = AddUserServerSchema.safeParse(formData);
+  const { confirmPassword, ...userDataToValidate } = formData; 
+  const validatedFields = UserServerSchema.omit({id: true}).safeParse(userDataToValidate);
 
   if (!validatedFields.success) {
     return {
       success: false,
-      error: "Falló la validación del servidor para el usuario",
+      error: "Falló la validación del servidor para nuevo usuario",
       fieldErrors: validatedFields.error.flatten().fieldErrors,
     };
   }
 
-  try {
-    const dataToSave: Omit<User, 'id' | 'lastUpdated'> = {
-        nombre: validatedFields.data.nombre,
-        email: validatedFields.data.email,
-        rol: validatedFields.data.rol,
-        password: validatedFields.data.password!,
-    };
-    const result = await dbAddUser(dataToSave);
-    if (result.error) {
-        return { success: false, error: result.error };
-    }
-    if (result.user) {
-        revalidatePath('/users');
-        await logAuditAction(actorUserId, 'CREATE_USER', {
-          createdUserId: result.user.id,
-          createdUserName: result.user.nombre,
-          createdUserEmail: result.user.email,
-          createdUserRole: result.user.rol,
-        });
-        return { success: true, user: result.user };
-    }
-    return { success: false, error: "Error desconocido al añadir el usuario." };
+  const { password, ...restOfData } = validatedFields.data;
+  if (!password) { 
+    return { success: false, error: "La contraseña es obligatoria para nuevos usuarios." };
+  }
+  
+  const userDataForDb = { ...restOfData, password };
 
+  try {
+    const result = await dbAddUser(userDataForDb);
+    if (result.user) {
+      revalidatePath('/users');
+      await logAuditAction(actorUserId, 'CREATE_USER', { userId: result.user.id, userName: result.user.nombre, userRole: result.user.rol });
+      return { success: true, user: result.user };
+    } else {
+      return { success: false, error: result.error || "Error desconocido al añadir usuario." };
+    }
   } catch (error: any) {
     console.error("Error añadiendo usuario:", error);
-    if (error.message === "El nombre de usuario o email ya está en uso.") {
-        return { success: false, error: error.message };
-    }
-    return { success: false, error: "Error al añadir el usuario." };
+    return { success: false, error: error.message || "Error al añadir el usuario." };
   }
 }
 
@@ -504,32 +481,44 @@ export async function updateUserAction(
   formData: UserFormValues,
   actorUserId: string
 ) {
-  const EditUserServerSchema = UserServerSchema.omit({id: true});
-  const validatedFields = EditUserServerSchema.safeParse(formData);
+  const { confirmPassword, id, ...userDataToValidate } = formData; 
+  
+  const validatedFields = UserServerSchema.omit({id: true}).safeParse(userDataToValidate);
 
   if (!validatedFields.success) {
     return {
       success: false,
-      error: "Falló la validación del servidor para actualizar el usuario",
+      error: "Falló la validación del servidor para editar usuario",
       fieldErrors: validatedFields.error.flatten().fieldErrors,
     };
   }
-
-  const { password, ...dataToUpdate } = validatedFields.data;
-  const updatePayload: Partial<Omit<User, 'id' | 'lastUpdated' | 'password'>> & { password?: string } = dataToUpdate;
-
-  if (password && password.trim() !== '') {
-    updatePayload.password = password;
+  
+  const { password, ...restOfData } = validatedFields.data;
+  const dataForDb: Partial<Omit<User, 'id' | 'lastUpdated'>> & { password?: string } = { ...restOfData };
+  if (password && password.length > 0) {
+    dataForDb.password = password;
   }
 
   try {
-    const updatedUser = await dbUpdateUser(userIdToUpdate, updatePayload);
+    const originalUser = await dbGetUserById(userIdToUpdate);
+    if (!originalUser) {
+        return { success: false, error: "Usuario original no encontrado para la bitácora." };
+    }
+
+    const updatedUser = await dbUpdateUser(userIdToUpdate, dataForDb);
     if (updatedUser) {
       revalidatePath('/users');
-      await logAuditAction(actorUserId, 'UPDATE_USER', {
-        updatedUserId: updatedUser.id,
-        updatedUserName: updatedUser.nombre,
-        changes: { email: updatedUser.email, rol: updatedUser.rol, passwordChanged: !!updatePayload.password }
+      await logAuditAction(actorUserId, 'UPDATE_USER', { 
+          userId: updatedUser.id, 
+          userName: updatedUser.nombre, 
+          originalName: originalUser.nombre,
+          originalRole: originalUser.rol,
+          changes: {
+              nombre: updatedUser.nombre,
+              email: updatedUser.email,
+              rol: updatedUser.rol,
+              passwordChanged: !!dataForDb.password
+          }
       });
       return { success: true, user: updatedUser };
     } else {
@@ -537,92 +526,60 @@ export async function updateUserAction(
     }
   } catch (error: any) {
     console.error("Error actualizando usuario:", error);
-     if (error.message === "El nombre de usuario o email ya está en uso por otro usuario.") {
-        return { success: false, error: error.message };
-    }
     return { success: false, error: error.message || "Error al actualizar el usuario." };
   }
 }
 
 export async function deleteUserAction(
-  userIdToDelete: string,
-  userNameToDelete: string, // Added for audit logging
-  actorUserId: string // Added for audit logging
+    userIdToDelete: string,
+    userName: string,
+    actorUserId: string
 ) {
+  if (userIdToDelete === actorUserId) {
+    return { success: false, error: "No puedes eliminar tu propia cuenta." };
+  }
+
   try {
-    const success = await dbDeleteUser(userIdToDelete);
-    if (success) {
+    const deleted = await dbDeleteUser(userIdToDelete);
+    if (deleted) {
       revalidatePath('/users');
-      await logAuditAction(actorUserId, 'DELETE_USER', {
-        deletedUserId: userIdToDelete,
-        deletedUserName: userNameToDelete,
-      });
+      await logAuditAction(actorUserId, 'DELETE_USER', { userId: userIdToDelete, userName });
       return { success: true };
+    } else {
+      return { success: false, error: "Usuario no encontrado o no se pudo eliminar." };
     }
-    return { success: false, error: "No se pudo eliminar el usuario o no fue encontrado." };
   } catch (error: any) {
     console.error("Error eliminando usuario:", error);
     return { success: false, error: error.message || "Error al eliminar el usuario." };
   }
 }
 
-// --- Auth Actions ---
-const LoginCredentialsSchema = z.object({
-  nombre: z.string().min(1, "Por favor, introduce tu nombre de usuario."),
-  password: z.string().min(1, "La contraseña no puede estar vacía."),
-});
-
-export async function loginUserAction(credentials: LoginCredentials): Promise<{ success: boolean; user?: Omit<User, 'password'>; error?: string; fieldErrors?: z.ZodFormattedError<LoginCredentials, string>["_errors"] | Record<string, string[]> }> {
-  const validatedFields = LoginCredentialsSchema.safeParse(credentials);
-  if (!validatedFields.success) {
-    return {
-      success: false,
-      error: "Falló la validación de credenciales.",
-      fieldErrors: validatedFields.error.flatten().fieldErrors,
-    };
+export async function loginUserAction(credentials: LoginCredentials) {
+  if (!credentials.nombre || !credentials.password) {
+    return { success: false, error: 'Nombre de usuario y contraseña son requeridos.' };
   }
 
   try {
-    const user = await dbAuthenticateUser(validatedFields.data);
+    const user = await dbAuthenticateUser(credentials);
     if (user) {
-      await logAuditAction(user.id, 'USER_LOGIN_SUCCESS', { username: user.nombre });
+      await logAuditAction(user.id, 'USER_LOGIN_SUCCESS', { userName: user.nombre });
       return { success: true, user };
     } else {
-      // Cannot log actor if login fails and we don't know who it is
-      console.warn(`Login attempt failed for username: ${credentials.nombre}`);
-      return { success: false, error: "Nombre de usuario o contraseña incorrectos. Por favor, inténtalo de nuevo." };
+      return { success: false, error: 'Nombre de usuario o contraseña incorrectos.' };
     }
   } catch (error: any) {
-    const errorMessage = String(error.message || '');
-     if (errorMessage.includes('querySrv ENOTFOUND') ||
-        errorMessage.includes('ECONNREFUSED') ||
-        errorMessage.includes('timeout') ||
-        errorMessage.includes('SSL routines') || 
-        errorMessage.includes('tls') ||
-        errorMessage.includes('certificate') ||
-        errorMessage.includes('AuthenticationFailed') 
-       ) {
-        console.error('[loginUserAction] Error de Conexión/Autenticación con MongoDB Atlas:', errorMessage);
-        return {
-            success: false,
-            error: `Error de Conexión/Autenticación con la Base de Datos. Por favor, verifica tu MONGODB_URI en .env.local y la configuración de "Network Access" en Atlas. (Detalle: ${errorMessage})`
-        };
-    }
-    console.error("[loginUserAction] Error de Inicio de Sesión (no relacionado con conexión/autenticación de URI):", errorMessage);
-    return {
-        success: false,
-        error: `Error de Inicio de Sesión. (Detalle: ${errorMessage || 'Error desconocido. Revisa la consola del servidor.'})`
-    };
+    console.error("Error en loginUserAction:", error);
+    return { success: false, error: 'Ocurrió un error en el servidor. Inténtalo más tarde.' };
   }
 }
 
-// --- Customer Actions ---
+// --- Customer Schemas and Actions ---
 const CustomerServerSchema = z.object({
-  name: z.string().min(2, "El nombre del cliente es obligatorio."),
-  email: z.string().email("Email inválido.").optional().or(z.literal('')),
-  phone: z.string().optional().or(z.literal('')),
-  address: z.string().optional().or(z.literal('')),
-  ruc: z.string().optional().or(z.literal('')),
+  name: z.string().min(2, "El nombre del cliente es obligatorio (mín. 2 caracteres)."),
+  email: z.string().email("Introduce un email válido.").optional().or(z.literal('')).transform(val => val === '' ? undefined : val),
+  phone: z.string().optional().or(z.literal('')).transform(val => val === '' ? undefined : val),
+  address: z.string().optional().or(z.literal('')).transform(val => val === '' ? undefined : val),
+  ruc: z.string().optional().or(z.literal('')).transform(val => val === '' ? undefined : val),
 });
 
 export async function fetchCustomersAction(): Promise<Customer[]> {
@@ -630,24 +587,21 @@ export async function fetchCustomersAction(): Promise<Customer[]> {
 }
 
 export async function addNewCustomerAction(
-  formData: CustomerFormValues,
+  formData: Omit<CustomerFormValues, 'id'>,
   actorUserId: string
 ) {
   const validatedFields = CustomerServerSchema.safeParse(formData);
   if (!validatedFields.success) {
     return {
       success: false,
-      error: "Falló la validación para el cliente.",
+      error: "Falló la validación del servidor para nuevo cliente.",
       fieldErrors: validatedFields.error.flatten().fieldErrors,
     };
   }
   try {
     const newCustomer = await dbAddCustomer(validatedFields.data);
     revalidatePath('/customers');
-    await logAuditAction(actorUserId, 'CREATE_CUSTOMER', {
-      customerId: newCustomer.id,
-      customerName: newCustomer.name,
-    });
+    await logAuditAction(actorUserId, 'CREATE_CUSTOMER', { customerId: newCustomer.id, customerName: newCustomer.name });
     return { success: true, customer: newCustomer };
   } catch (error: any) {
     console.error("Error añadiendo cliente:", error);
@@ -657,29 +611,33 @@ export async function addNewCustomerAction(
 
 export async function updateCustomerAction(
   customerId: string,
-  formData: CustomerFormValues,
+  formData: Omit<CustomerFormValues, 'id'>,
   actorUserId: string
 ) {
   const validatedFields = CustomerServerSchema.safeParse(formData);
   if (!validatedFields.success) {
     return {
       success: false,
-      error: "Falló la validación para actualizar el cliente.",
+      error: "Falló la validación del servidor para editar cliente.",
       fieldErrors: validatedFields.error.flatten().fieldErrors,
     };
   }
   try {
+    const originalCustomer = await dbGetCustomers().then(c => c.find(cust => cust.id === customerId));
+
     const updatedCustomer = await dbUpdateCustomer(customerId, validatedFields.data);
     if (updatedCustomer) {
       revalidatePath('/customers');
-      await logAuditAction(actorUserId, 'UPDATE_CUSTOMER', {
-        customerId: updatedCustomer.id,
-        customerName: updatedCustomer.name,
-        changes: formData
+       await logAuditAction(actorUserId, 'UPDATE_CUSTOMER', { 
+          customerId: updatedCustomer.id, 
+          customerName: updatedCustomer.name,
+          originalName: originalCustomer?.name, 
+          changes: formData 
       });
       return { success: true, customer: updatedCustomer };
+    } else {
+      return { success: false, error: "Cliente no encontrado o no se pudo actualizar." };
     }
-    return { success: false, error: "Cliente no encontrado o no se pudo actualizar." };
   } catch (error: any) {
     console.error("Error actualizando cliente:", error);
     return { success: false, error: error.message || "Error al actualizar el cliente." };
@@ -688,115 +646,117 @@ export async function updateCustomerAction(
 
 export async function deleteCustomerAction(
   customerId: string,
-  customerName: string, // Added for audit logging
-  actorUserId: string // Added for audit logging
+  customerName: string,
+  actorUserId: string
 ) {
   try {
-    const success = await dbDeleteCustomer(customerId);
-    if (success) {
+    const deleted = await dbDeleteCustomer(customerId);
+    if (deleted) {
       revalidatePath('/customers');
-      await logAuditAction(actorUserId, 'DELETE_CUSTOMER', {
-        customerId,
-        customerName,
-      });
+      await logAuditAction(actorUserId, 'DELETE_CUSTOMER', { customerId, customerName });
       return { success: true };
+    } else {
+      return { success: false, error: "Cliente no encontrado o no se pudo eliminar." };
     }
-    return { success: false, error: "No se pudo eliminar el cliente o no fue encontrado." };
   } catch (error: any) {
     console.error("Error eliminando cliente:", error);
     return { success: false, error: error.message || "Error al eliminar el cliente." };
   }
 }
 
-// --- Sales Actions ---
-const SaleItemServerSchema = z.object({
-  productId: z.string().min(1, "ID de producto es requerido."),
+// --- Sale Schemas and Actions ---
+// Server-side schema for SaleItem in the CreateSaleForm
+const SaleItemServerFormSchema = z.object({ 
+  inventoryItemId: z.string().min(1, "ID de artículo de inventario es requerido."),
   productCode: z.string(),
   productName: z.string(),
-  quantity: z.coerce.number().int().gt(0, "La cantidad debe ser un entero positivo."),
-  unitPriceAtSale: z.coerce.number().min(0, "El precio unitario debe ser no negativo."),
+  unitName: z.string(), // Unit name of the product
+  unitPrice: z.number().min(0), // Price per unit
+  quantityToSell: z.string().refine(val => parseFloat(val) > 0, "La cantidad debe ser un número positivo."),
+  availableStock: z.number().min(0), // Current stock of the product
 });
 
-const CreateSaleServerSchema = z.object({
-  customerId: z.string().optional().transform(val => val === '' ? undefined : val),
-  items: z.array(SaleItemServerSchema).min(1, "La venta debe tener al menos un artículo."),
-  paymentMethod: z.enum(['efectivo', 'tarjeta'], { required_error: "Debe seleccionar un método de pago." }),
+// Server-side schema for the CreateSaleForm
+const CreateSaleServerFormSchema = z.object({ 
+  customerId: z.string().optional(),
+  items: z.array(SaleItemServerFormSchema).min(1, "Debe añadir al menos un artículo a la venta."),
+  paymentMethod: z.enum(['efectivo', 'tarjeta']),
 });
 
 export async function createSaleAction(
-  actorUserId: string, // Renamed from userId for consistency
-  formData: CreateSaleFormValues
-): Promise<{ success: boolean; sale?: Sale; error?: string; stockError?: string, fieldErrors?: any }> {
-  const validatedFields = CreateSaleServerSchema.safeParse(formData);
+  actorUserId: string,
+  formData: CreateSaleFormValues 
+): Promise<{ sale?: Sale; error?: string; stockError?: string; fieldErrors?: any }> {
+
+  const validatedFields = CreateSaleServerFormSchema.safeParse(formData);
 
   if (!validatedFields.success) {
-    return {
-      success: false,
-      error: "Falló la validación de la venta en el servidor.",
-      fieldErrors: validatedFields.error.flatten().fieldErrors,
-    };
+    const fieldErrors = validatedFields.error.flatten().fieldErrors;
+    console.error("Server-side validation failed for CreateSale:", JSON.stringify(fieldErrors, null, 2));
+    
+    let specificError = "Falló la validación de la venta en el servidor.";
+    if (fieldErrors?.items && typeof fieldErrors.items === 'string') {
+        specificError = fieldErrors.items;
+    } else if (Array.isArray(fieldErrors?.items)) {
+        const itemError = fieldErrors.items.find((err: any) => err && err.quantityToSell);
+        if (itemError?.quantityToSell) specificError = `Error en cantidad: ${itemError.quantityToSell._errors.join(', ')}`;
+    }
+    return { error: specificError, fieldErrors: fieldErrors };
   }
 
-  const { customerId: formCustomerId, items: formItems, paymentMethod } = validatedFields.data;
+  const { customerId, items: formItems, paymentMethod } = validatedFields.data;
 
   let customerName: string | undefined;
-  let actualCustomerId: string | undefined = formCustomerId;
-
-  if (formCustomerId && formCustomerId !== NO_CUSTOMER_SELECTED_VALUE) {
-    const customers = await dbGetCustomers(); 
-    const customer = customers.find(c => c.id === formCustomerId);
+  if (customerId && customerId !== NO_CUSTOMER_SELECTED_VALUE) {
+    const customer = await dbGetCustomers().then(customers => customers.find(c => c.id === customerId));
     customerName = customer?.name;
-  } else {
-    actualCustomerId = undefined; 
-    customerName = undefined; // Or "Consumidor Final" if you want to log that explicitly
   }
+  
+  const saleItemsToSave: SaleItem[] = formItems.map(item => {
+    const quantityNum = parseFloat(item.quantityToSell);
+    return {
+      productId: item.inventoryItemId,
+      productCode: item.productCode,
+      productName: item.productName,
+      quantitySold: quantityNum,
+      unitNameAtSale: item.unitName, // Store the unit name at sale time
+      priceAtSale: item.unitPrice, // This is the unitPrice of the inventoryItem
+      subtotal: quantityNum * item.unitPrice,
+  }});
 
+  const totalAmount = saleItemsToSave.reduce((sum, item) => sum + item.subtotal, 0);
 
-  const saleItems: SaleItem[] = formItems.map(item => ({
-    productId: item.productId,
-    productCode: item.productCode,
-    productName: item.productName,
-    quantity: item.quantity,
-    unitPriceAtSale: item.unitPriceAtSale,
-    subtotal: item.quantity * item.unitPriceAtSale,
-  }));
-
-  const totalAmount = saleItems.reduce((sum, item) => sum + item.subtotal, 0);
-
-  const saleDataToSave: Omit<Sale, 'id' | 'saleNumber' | 'lastUpdated' | 'sellerName'> & { userId: string } = {
+  const saleDataForDb = {
     date: new Date().toISOString(),
-    customerId: actualCustomerId,
-    customerName, // This will be undefined if it's a "Consumidor Final"
-    items: saleItems,
+    customerId: customerId === NO_CUSTOMER_SELECTED_VALUE ? undefined : customerId,
+    customerName,
+    items: saleItemsToSave,
     totalAmount,
     paymentMethod,
-    userId: actorUserId, // Use actorUserId here
+    userId: actorUserId,
   };
 
   try {
-    const result = await dbAddSale(saleDataToSave);
+    // Stock validation and deduction happens in dbAddSale now
+    const result = await dbAddSale(saleDataForDb); 
     if (result.sale) {
-      revalidatePath('/inventory');
       revalidatePath('/sales');
-      revalidatePath(`/sales/${result.sale.id}`);
-      await logAuditAction(actorUserId, 'CREATE_SALE', {
-        saleId: result.sale.id,
-        saleNumber: result.sale.saleNumber,
+      revalidatePath('/inventory'); 
+      await logAuditAction(actorUserId, 'CREATE_SALE', { 
+        saleId: result.sale.id, 
+        saleNumber: result.sale.saleNumber, 
         totalAmount: result.sale.totalAmount,
-        itemCount: result.sale.items.length,
-        paymentMethod: result.sale.paymentMethod,
-        customerId: result.sale.customerId,
-        customerName: result.sale.customerName
+        itemCount: result.sale.items.length
       });
-      return { success: true, sale: result.sale };
+      return { sale: result.sale };
     } else if (result.stockError) {
-      return { success: false, stockError: result.stockError };
+      return { stockError: result.stockError };
     } else {
-      return { success: false, error: result.error || "Error desconocido al crear la venta." };
+      return { error: result.error || "Error desconocido al crear la venta." };
     }
   } catch (error: any) {
-    console.error("Error creando la venta:", error);
-    return { success: false, error: error.message || "Error al crear la venta." };
+    console.error("Error creando venta:", error);
+    return { error: error.message || "Error al crear la venta." };
   }
 }
 
@@ -805,44 +765,30 @@ export async function fetchSalesAction(): Promise<Sale[]> {
 }
 
 export async function fetchSaleByIdAction(saleId: string): Promise<Sale | null> {
-  const sale = await dbGetSaleById(saleId);
-  if (sale && !sale.sellerName && sale.userId) {
-    try {
-      const user = await dbGetUserById(sale.userId); 
-      if (user) {
-        sale.sellerName = user.nombre;
-      }
-    } catch (error) {
-      console.error(`Error fetching seller name for sale ${saleId}:`, error);
-    }
-  }
-  return sale;
+  return dbGetSaleById(saleId);
 }
 
 export async function deleteSaleAction(
   saleId: string,
-  saleNumber: string, // Added for audit logging
-  actorUserId: string // Added for audit logging
+  saleNumber: string,
+  actorUserId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const result = await dbDeleteSaleAndRestoreStock(saleId);
+    // Stock restoration happens in dbDeleteSaleAndRestoreStock
+    const result = await dbDeleteSaleAndRestoreStock(saleId); 
     if (result.success) {
       revalidatePath('/sales');
-      revalidatePath('/inventory');
-      await logAuditAction(actorUserId, 'DELETE_SALE', {
-        saleId,
-        saleNumber,
-        stockRestored: true,
-      });
+      revalidatePath('/inventory'); 
+      await logAuditAction(actorUserId, 'DELETE_SALE', { saleId, saleNumber });
       return { success: true };
+    } else {
+      return { success: false, error: result.error || "No se pudo eliminar la venta o restaurar el stock." };
     }
-    return { success: false, error: result.error || "No se pudo eliminar la venta." };
   } catch (error: any) {
-    console.error("Error eliminando la venta:", error);
+    console.error("Error eliminando venta:", error);
     return { success: false, error: error.message || "Error al eliminar la venta." };
   }
 }
-
 
 const EditSaleServerSchema = z.object({
   saleId: z.string().min(1),
@@ -850,63 +796,57 @@ const EditSaleServerSchema = z.object({
   paymentMethod: z.enum(['efectivo', 'tarjeta']),
 });
 
+
 export async function updateSaleAction(
   formData: EditSaleFormValues,
-  actorUserId: string // Added for audit logging
-): Promise<{ success: boolean; sale?: Sale; error?: string; fieldErrors?: any }> {
+  actorUserId: string
+): Promise<{ sale?: Sale; error?: string }> {
   const validatedFields = EditSaleServerSchema.safeParse(formData);
-
   if (!validatedFields.success) {
-    return {
-      success: false,
-      error: "Falló la validación para editar la venta.",
-      fieldErrors: validatedFields.error.flatten().fieldErrors,
-    };
+    return { error: "Falló la validación del servidor para editar venta." };
   }
 
-  const { saleId, customerId: formCustomerId, paymentMethod } = validatedFields.data;
-
+  const { saleId, customerId, paymentMethod } = validatedFields.data;
+  
   let customerName: string | undefined;
-  let actualCustomerId: string | undefined = formCustomerId;
-
-  if (formCustomerId && formCustomerId !== NO_CUSTOMER_SELECTED_VALUE) {
-     const customers = await dbGetCustomers();
-     const customer = customers.find(c => c.id === formCustomerId);
-     customerName = customer?.name;
-  } else {
-     actualCustomerId = undefined; 
-     customerName = undefined; // Or "Consumidor Final"
+  if (customerId && customerId !== NO_CUSTOMER_SELECTED_VALUE) {
+      const customer = await dbGetCustomers().then(customers => customers.find(c => c.id === customerId));
+      customerName = customer?.name;
   }
 
+  const dataToUpdate: { customerId?: string; customerName?: string; paymentMethod?: PaymentMethod } = {
+    paymentMethod,
+    customerId: customerId === NO_CUSTOMER_SELECTED_VALUE ? undefined : customerId,
+    customerName: customerId === NO_CUSTOMER_SELECTED_VALUE ? undefined : customerName,
+  };
+  
   try {
-    const originalSale = await dbGetSaleById(saleId); // For logging changes
-    const updatedSale = await dbUpdateSaleDetails(saleId, {
-      customerId: actualCustomerId,
-      customerName: customerName,
-      paymentMethod: paymentMethod,
-    });
+    const originalSale = await dbGetSaleById(saleId);
+     if (!originalSale) {
+        return { error: "Venta original no encontrada para la bitácora." };
+    }
 
-    if (updatedSale && originalSale) {
-      revalidatePath('/sales');
+    const updatedSale = await dbUpdateSaleDetails(saleId, dataToUpdate);
+    if (updatedSale) {
+      revalidatePath(`/sales`);
       revalidatePath(`/sales/${saleId}`);
-      await logAuditAction(actorUserId, 'UPDATE_SALE_DETAILS', {
-        saleId: updatedSale.id,
-        saleNumber: updatedSale.saleNumber,
-        changes: {
-            customerId: updatedSale.customerId,
-            customerName: updatedSale.customerName,
-            paymentMethod: updatedSale.paymentMethod
-        },
-        originalCustomerId: originalSale.customerId,
-        originalCustomerName: originalSale.customerName,
-        originalPaymentMethod: originalSale.paymentMethod
+      await logAuditAction(actorUserId, 'UPDATE_SALE', { 
+          saleId: updatedSale.id, 
+          saleNumber: updatedSale.saleNumber,
+          originalCustomerId: originalSale.customerId,
+          originalPaymentMethod: originalSale.paymentMethod,
+          changes: {
+              customerId: updatedSale.customerId,
+              customerName: updatedSale.customerName,
+              paymentMethod: updatedSale.paymentMethod
+          }
       });
-      return { success: true, sale: updatedSale };
+      return { sale: updatedSale };
     } else {
-      return { success: false, error: "Venta no encontrada o no se pudo actualizar." };
+      return { error: "Venta no encontrada o no se pudo actualizar." };
     }
   } catch (error: any) {
-    console.error("Error actualizando la venta:", error);
-    return { success: false, error: error.message || "Error al actualizar la venta." };
+    console.error("Error actualizando venta:", error);
+    return { error: error.message || "Error al actualizar la venta." };
   }
 }

@@ -1,45 +1,42 @@
 
 'use client';
-// The "use client" directive must be at the top of the file.
 
-import { fetchInventoryItems } from '@/lib/actions';
+import { fetchInventoryItems, logAuditAction } from '@/lib/actions'; 
 import { InventoryTable } from '@/components/inventory-table';
 import { InventoryActions } from '@/components/inventory-actions';
 import type { InventoryItem } from '@/lib/types';
 import { Suspense } from 'react';
-import PageLoading from './loading'; // Use the specific loading component
-import React, { useState, useTransition, useEffect } from 'react';
+import PageLoading from './loading'; 
+import React, { useState, useTransition, useEffect, useCallback } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/auth-context';
-
-// Removed imports and logic related to trend analysis
+import { analyzeInventoryTrends } from '@/ai/flows/analyze-inventory-trends';
+import type { AnalyzeInventoryTrendsInput, AnalyzeInventoryTrendsOutput } from '@/ai/flows/analyze-inventory-trends';
+import { TrendAnalysisCard } from '@/components/trend-analysis-card';
+import { Button } from '@/components/ui/button'; 
+import { Loader2, BarChart3 } from 'lucide-react'; 
 
 export default function InventoryPageWrapper() {
   const [initialItems, setInitialItems] = useState<InventoryItem[]>([]);
   const [isLoadingInitial, setIsLoadingInitial] = useState(true);
-  const { user } = useAuth(); // Get user for role check
+  const { user } = useAuth(); 
+
+  const loadInitialItems = useCallback(async () => {
+    setIsLoadingInitial(true);
+    try {
+      const items = await fetchInventoryItems('name', 'asc');
+      setInitialItems(items);
+    } catch (error) {
+      console.error("Error al obtener los artículos iniciales", error);
+    }
+    setIsLoadingInitial(false);
+  }, []); // Empty dependency array means this callback is stable
 
   useEffect(() => {
-    async function loadInitialItems() {
-      setIsLoadingInitial(true);
-      try {
-        const items = await fetchInventoryItems('name', 'asc');
-        setInitialItems(items);
-      } catch (error) {
-        console.error("Error al obtener los artículos iniciales", error);
-        // Consider adding a toast or user-facing error message here
-      }
-      setIsLoadingInitial(false);
-    }
     loadInitialItems();
-  }, []);
+  }, [loadInitialItems]); // loadInitialItems is now stable
 
 
-  if (isLoadingInitial && !user) { // Also check user to prevent flash of loading if auth is still resolving
-    return <PageLoading />;
-  }
-  
-  // If user is loaded and still loading items, show loading.
   if (isLoadingInitial) {
      return <PageLoading />;
   }
@@ -49,7 +46,7 @@ export default function InventoryPageWrapper() {
     <Suspense fallback={<PageLoading />}>
       <InventoryPageClient
         initialItems={initialItems}
-        userRole={user?.rol}
+        userRole={user?.rol} 
       />
     </Suspense>
   );
@@ -58,29 +55,80 @@ export default function InventoryPageWrapper() {
 
 interface InventoryPageClientProps {
   initialItems: InventoryItem[];
-  userRole?: 'admin' | 'empleado';
+  userRole?: 'admin' | 'empleado' | 'inventory_manager'; 
 }
 
 function InventoryPageClient({ initialItems, userRole }: InventoryPageClientProps) {
   const [items, setItems] = useState<InventoryItem[]>(initialItems);
-  // Removed analysisResult, isAnalyzing, and handleAnalyzeTrendsClient
-  const [isPending, startTransition] = useTransition(); // isPending might be unused if no transitions are started
+  const [analysisResult, setAnalysisResult] = useState<AnalyzeInventoryTrendsOutput | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  // const [isPending, startTransition] = useTransition(); // isPending from useTransition is not used, remove if not needed later
   const { toast } = useToast();
+  const { user } = useAuth();
   
   useEffect(() => {
     setItems(initialItems);
   }, [initialItems]);
 
-  // handleAnalyzeTrendsClient function was removed
+  const handleAnalyzeTrendsClient = async () => {
+    if (!items || items.length === 0) {
+      toast({ title: "No hay datos", description: "No hay artículos en el inventario para analizar.", variant: "default" });
+      return;
+    }
+    if (!user?.id) {
+        toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario para la bitácora de análisis.", variant: "destructive" });
+        return;
+    }
+
+    setIsAnalyzing(true);
+    setAnalysisResult(null); 
+    
+    const analysisInput: AnalyzeInventoryTrendsInput = items.map(item => ({
+      item: item.name,
+      quantity: item.quantity, // This is in the item's defined unit
+      stockMinimo: item.stockMinimo, // This is in the item's defined unit
+      dailySales: item.dailySales, // This is in the item's defined unit
+    }));
+
+    try {
+      const result = await analyzeInventoryTrends(analysisInput);
+      setAnalysisResult(result);
+      toast({ title: "Análisis Completado", description: "Se han analizado las tendencias del inventario." });
+      await logAuditAction(user.id, 'ANALYZE_INVENTORY_TRENDS', { itemCount: items.length, hasPredictions: result.stockoutPredictions.length > 0 });
+    } catch (error: any) {
+      console.error("Error al analizar tendencias:", error);
+      toast({ title: "Error de Análisis", description: error.message || "No se pudieron analizar las tendencias.", variant: "destructive" });
+      await logAuditAction(user.id, 'ANALYZE_INVENTORY_TRENDS_ERROR', { itemCount: items.length, error: error.message });
+    }
+    setIsAnalyzing(false);
+  };
+
 
   return (
     <div className="space-y-8">
       <InventoryActions 
-        // onAnalyzeTrends and isAnalyzing props were removed from InventoryActions call
         userRole={userRole}
       />
+      <div className="flex justify-end mb-4">
+        {(userRole === 'admin' || userRole === 'inventory_manager') && (
+            <Button onClick={handleAnalyzeTrendsClient} disabled={isAnalyzing}>
+            {isAnalyzing ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+                <BarChart3 className="mr-2 h-4 w-4" />
+            )}
+            Analizar Tendencias de Inventario (IA)
+            </Button>
+        )}
+      </div>
+      {isAnalyzing && (
+        <div className="flex items-center justify-center py-4">
+          <Loader2 className="mr-2 h-6 w-6 animate-spin text-primary" />
+          <p className="text-muted-foreground">Analizando inventario con IA, por favor espera...</p>
+        </div>
+      )}
       <InventoryTable initialItems={items} userRole={userRole} />
-      {/* TrendAnalysisCard and related loading messages were removed */}
+      {analysisResult && <TrendAnalysisCard analysisResult={analysisResult} />}
     </div>
   );
 }

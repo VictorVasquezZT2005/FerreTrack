@@ -2,6 +2,9 @@
 'use client';
 
 import { z } from 'zod';
+import type { UnitType } from './types'; // Import UnitType
+
+// SellingUnitClientSchema is removed.
 
 // Schema for validating data for a NEW inventory item (client-side, Zod resolver)
 export const NewInventoryItemClientSchema = z.object({
@@ -11,12 +14,14 @@ export const NewInventoryItemClientSchema = z.object({
     .max(2, "El código de estante debe tener 2 caracteres.")
     .regex(/^[a-zA-Z0-9]{2}$/, "El código de estante debe ser alfanumérico de 2 caracteres."),
   name: z.string().min(3, "El nombre debe tener al menos 3 caracteres."),
-  quantity: z.string().refine(val => !isNaN(parseFloat(val)) && parseFloat(val) >= 0, { message: 'La cantidad inicial debe ser un número no negativo.'}),
+  quantity: z.string().refine(val => !isNaN(parseFloat(val)) && parseFloat(val) >= 0, { message: 'La cantidad debe ser un número no negativo.'}),
+  unitPrice: z.string().refine(val => !isNaN(parseFloat(val)) && parseFloat(val) >= 0, { message: 'El precio unitario debe ser un número no negativo.' }),
   stockMinimo: z.string().refine(val => !isNaN(parseFloat(val)) && parseFloat(val) >= 0, { message: 'Las existencias mínimas deben ser un número no negativo.'}),
   dailySales: z.string().refine(val => !isNaN(parseFloat(val)) && parseFloat(val) >= 0, { message: 'Las ventas diarias deben ser un número no negativo.'}),
-  category: z.string().optional(), // Se auto-rellena, pero puede ser opcional si no hay mapeo
+  category: z.string().optional(),
   supplier: z.string().optional(),
-  unitPrice: z.string().optional().refine(val => val === undefined || val === '' || (!isNaN(parseFloat(val)) && parseFloat(val) >= 0), { message: 'El precio unitario debe ser un número no negativo si se proporciona.'}),
+  unitType: z.enum(['countable', 'measurable'], { required_error: "Debes seleccionar un tipo de unidad."}),
+  unitName: z.string().min(1, "El nombre de la unidad es obligatorio (ej: pieza, galón, metro)."),
 });
 
 const CODE_REGEX = /^\d{2}-[a-zA-Z0-9]{2}-\d{5}$/;
@@ -32,11 +37,13 @@ export const UpdateStockClientSchema = z.object({
 export const EditInventoryItemClientSchema = z.object({
   id: z.string().min(1, "ID del artículo es requerido para la edición."),
   name: z.string().min(3, "El nombre debe tener al menos 3 caracteres."),
+  unitPrice: z.string().refine(val => !isNaN(parseFloat(val)) && parseFloat(val) >= 0, { message: 'El precio unitario debe ser un número no negativo.' }),
   stockMinimo: z.string().refine(val => !isNaN(parseFloat(val)) && parseFloat(val) >= 0, { message: 'Las existencias mínimas deben ser un número no negativo.'}),
   dailySales: z.string().refine(val => !isNaN(parseFloat(val)) && parseFloat(val) >= 0, { message: 'Las ventas diarias deben ser un número no negativo.'}),
   category: z.string().optional(),
   supplier: z.string().optional(),
-  unitPrice: z.string().optional().refine(val => val === undefined || val === '' || (!isNaN(parseFloat(val)) && parseFloat(val) >= 0), { message: 'El precio unitario debe ser un número no negativo si se proporciona.'}),
+  unitType: z.enum(['countable', 'measurable'], { required_error: "Debes seleccionar un tipo de unidad."}),
+  unitName: z.string().min(1, "El nombre de la unidad es obligatorio (ej: pieza, galón, metro)."),
 });
 
 
@@ -89,6 +96,34 @@ export const CustomerClientSchema = z.object({
   address: z.string().optional().or(z.literal('')),
   ruc: z.string().optional().or(z.literal('')),
 });
+
+// Client-side Zod schema for SaleItem in the form
+export const SaleItemClientFormSchema = z.object({
+  inventoryItemId: z.string().min(1, "ID de artículo de inventario es requerido."),
+  productCode: z.string(),
+  productName: z.string(),
+  unitName: z.string(),
+  unitPrice: z.number().min(0),
+  quantityToSell: z.string().refine(val => {
+    const num = parseFloat(val);
+    return !isNaN(num) && num > 0;
+  }, "La cantidad debe ser un número positivo."),
+  availableStock: z.number().min(0),
+}).refine(data => {
+  const quantityToSellNum = parseFloat(data.quantityToSell);
+  return quantityToSellNum <= data.availableStock;
+}, {
+  message: "La cantidad solicitada excede el stock disponible.",
+  path: ["quantityToSell"],
+});
+
+// Client-side Zod schema for the CreateSale form
+export const CreateSaleClientFormSchema = z.object({
+  customerId: z.string().optional(),
+  items: z.array(SaleItemClientFormSchema).min(1, "Debe añadir al menos un artículo a la venta."),
+  paymentMethod: z.enum(['efectivo', 'tarjeta'], { required_error: "Debe seleccionar un método de pago." }),
+});
+
 
 // Schema for editing a sale (limited)
 export const EditSaleClientSchema = z.object({
