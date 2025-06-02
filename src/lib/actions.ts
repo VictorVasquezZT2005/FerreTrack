@@ -686,7 +686,7 @@ const CreateSaleServerFormSchema = z.object({
 export async function createSaleAction(
   actorUserId: string,
   formData: CreateSaleFormValues 
-): Promise<{ sale?: Sale; error?: string; stockError?: string; fieldErrors?: any }> {
+): Promise<{ success: boolean; sale?: Sale; error?: string; stockError?: string; fieldErrors?: any }> {
 
   const validatedFields = CreateSaleServerFormSchema.safeParse(formData);
 
@@ -701,7 +701,7 @@ export async function createSaleAction(
         const itemError = fieldErrors.items.find((err: any) => err && err.quantityToSell);
         if (itemError?.quantityToSell) specificError = `Error en cantidad: ${itemError.quantityToSell._errors.join(', ')}`;
     }
-    return { error: specificError, fieldErrors: fieldErrors };
+    return { success: false, error: specificError, fieldErrors: fieldErrors };
   }
 
   const { customerId, items: formItems, paymentMethod } = validatedFields.data;
@@ -737,7 +737,6 @@ export async function createSaleAction(
   };
 
   try {
-    // Stock validation and deduction happens in dbAddSale now
     const result = await dbAddSale(saleDataForDb); 
     if (result.sale) {
       revalidatePath('/sales');
@@ -748,15 +747,18 @@ export async function createSaleAction(
         totalAmount: result.sale.totalAmount,
         itemCount: result.sale.items.length
       });
-      return { sale: result.sale };
+      return { success: true, sale: result.sale };
     } else if (result.stockError) {
-      return { stockError: result.stockError };
+      return { success: false, stockError: result.stockError };
     } else {
-      return { error: result.error || "Error desconocido al crear la venta." };
+      const errorMessage = result.error || "Error desconocido del servidor al intentar crear la venta.";
+      console.warn(`createSaleAction: dbAddSale did not return a sale or stockError. Error from dbAddSale: ${result.error}`);
+      return { success: false, error: errorMessage };
     }
   } catch (error: any) {
-    console.error("Error creando venta:", error);
-    return { error: error.message || "Error al crear la venta." };
+    console.error("Error creando venta (createSaleAction catch):", error);
+    const message = error.message || "Se produjo un error interno del servidor al crear la venta.";
+    return { success: false, error: message };
   }
 }
 
@@ -800,10 +802,10 @@ const EditSaleServerSchema = z.object({
 export async function updateSaleAction(
   formData: EditSaleFormValues,
   actorUserId: string
-): Promise<{ sale?: Sale; error?: string }> {
+): Promise<{ success: boolean; sale?: Sale; error?: string }> {
   const validatedFields = EditSaleServerSchema.safeParse(formData);
   if (!validatedFields.success) {
-    return { error: "Falló la validación del servidor para editar venta." };
+    return { success: false, error: "Falló la validación del servidor para editar venta." };
   }
 
   const { saleId, customerId, paymentMethod } = validatedFields.data;
@@ -823,7 +825,7 @@ export async function updateSaleAction(
   try {
     const originalSale = await dbGetSaleById(saleId);
      if (!originalSale) {
-        return { error: "Venta original no encontrada para la bitácora." };
+        return { success: false, error: "Venta original no encontrada para la bitácora." };
     }
 
     const updatedSale = await dbUpdateSaleDetails(saleId, dataToUpdate);
@@ -841,12 +843,13 @@ export async function updateSaleAction(
               paymentMethod: updatedSale.paymentMethod
           }
       });
-      return { sale: updatedSale };
+      return { success: true, sale: updatedSale };
     } else {
-      return { error: "Venta no encontrada o no se pudo actualizar." };
+      return { success: false, error: "Venta no encontrada o no se pudo actualizar." };
     }
   } catch (error: any) {
     console.error("Error actualizando venta:", error);
-    return { error: error.message || "Error al actualizar la venta." };
+    return { success: false, error: error.message || "Error al actualizar la venta." };
   }
 }
+

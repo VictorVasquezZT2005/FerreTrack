@@ -534,7 +534,7 @@ export async function addSale(
   // --- End Stock Validation ---
 
   let sellerName = 'Usuario Desconocido';
-  if (ObjectId.isValid(saleData.userId)) {
+  if (ObjectId.isValid(saleData.userId)) { // saleData.userId is the actorUserId
     const seller = await getUserById(saleData.userId); 
     if (seller) {
       sellerName = seller.nombre;
@@ -579,19 +579,24 @@ export async function addSale(
       const insertedSaleWithId = { ...newSaleToInsert, _id: result.insertedId };
       return { sale: mapMongoId(insertedSaleWithId) };
     } else {
-      return { error: "Error al guardar la venta después de actualizar el stock." };
+      console.error("Error en dbAddSale: No se obtuvo insertedId de MongoDB después de insertOne.");
+      return { error: "Error crítico: No se pudo confirmar el guardado de la venta en la base de datos." };
     }
   } catch (e: any) {
-    console.error("Error durante addSale (bulkWrite o insertOne):", e);
+    console.error("Error durante dbAddSale (catch):", e);
+    // Attempt to revert stock updates if sale insertion fails
     console.warn("Intentando revertir actualizaciones de stock debido a error en la creación de la venta...");
     for (const saleItem of saleData.items) {
-        const quantityToRestore = saleItem.quantitySold; // No conversion factor
-        await inventoryCollection.updateOne(
-            { _id: new ObjectId(saleItem.productId) },
-            { $inc: { quantity: quantityToRestore } }
-        );
+        if (ObjectId.isValid(saleItem.productId)) {
+            const quantityToRestore = saleItem.quantitySold;
+            await inventoryCollection.updateOne(
+                { _id: new ObjectId(saleItem.productId) },
+                { $inc: { quantity: quantityToRestore } }
+            );
+        }
     }
-    return { error: `Error al procesar la venta: ${e.message}. Se intentó revertir el stock.` };
+    const message = e.message || "Se produjo un error interno del servidor durante el procesamiento de la base de datos para la venta.";
+    return { error: `Error al procesar la venta: ${message}. Se intentó revertir el stock.` };
   }
 }
 
@@ -704,3 +709,4 @@ export async function updateSaleDetails(
 
   return result ? mapMongoId(result) : null;
 }
+
