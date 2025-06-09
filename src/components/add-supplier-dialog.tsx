@@ -24,22 +24,25 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { addNewSupplierAction } from '@/lib/actions';
-import type { SupplierFormValues } from '@/lib/types';
+import type { SupplierFormValues, Supplier } from '@/lib/types'; // Added Supplier
 import { Loader2 } from 'lucide-react';
 import { useState, useTransition } from 'react';
 import { SupplierClientSchema } from '@/lib/form-schemas'; 
-import { useAuth } from '@/contexts/auth-context'; // Added useAuth
+import { useAuth } from '@/contexts/auth-context'; 
+import { useTechnicalMode } from '@/contexts/technical-mode-context'; // Import useTechnicalMode
 
 const formSchema = SupplierClientSchema.omit({id: true}); 
 
 interface AddSupplierDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSupplierAdded: (newSupplier: Supplier) => void; // Callback prop
 }
 
-export function AddSupplierDialog({ open, onOpenChange }: AddSupplierDialogProps) {
+export function AddSupplierDialog({ open, onOpenChange, onSupplierAdded }: AddSupplierDialogProps) {
   const { toast } = useToast();
-  const { user } = useAuth(); // Get user for actorUserId
+  const { user } = useAuth(); 
+  const { addMongoCommand } = useTechnicalMode(); // Use the hook
   const [isPending, startTransition] = useTransition();
 
   const form = useForm<SupplierFormValues>({
@@ -54,11 +57,18 @@ export function AddSupplierDialog({ open, onOpenChange }: AddSupplierDialogProps
   });
 
   async function onSubmit(values: SupplierFormValues) {
+    if (!user?.id) {
+      toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario para la bitácora.", variant: "destructive" });
+      return;
+    }
+
+    const productosArray = values.productos_suministrados_string
+        ? values.productos_suministrados_string.split(',').map(p => p.trim()).filter(p => p)
+        : [];
+    const simulatedCommand = `db.suppliers.insertOne({\n  name: "${values.name}",\n  telefono: "${values.telefono || ''}",\n  email: "${values.email || ''}",\n  contacto: "${values.contacto || ''}",\n  productos_suministrados: ${JSON.stringify(productosArray)},\n  lastUpdated: "CURRENT_TIMESTAMP"\n});`;
+    addMongoCommand(simulatedCommand);
+
     startTransition(async () => {
-      if (!user?.id) {
-        toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario para la bitácora.", variant: "destructive" });
-        return;
-      }
       const result = await addNewSupplierAction(values, user.id);
 
       if (result.success && result.supplier) {
@@ -66,6 +76,7 @@ export function AddSupplierDialog({ open, onOpenChange }: AddSupplierDialogProps
           title: 'Proveedor Añadido',
           description: `${result.supplier.name} se ha añadido correctamente.`,
         });
+        onSupplierAdded(result.supplier); 
         form.reset();
         onOpenChange(false);
       } else {
@@ -181,3 +192,5 @@ export function AddSupplierDialog({ open, onOpenChange }: AddSupplierDialogProps
     </Dialog>
   );
 }
+
+    

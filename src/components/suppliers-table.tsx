@@ -29,26 +29,25 @@ import {
 } from "@/components/ui/alert-dialog";
 import { EditSupplierDialog } from './edit-supplier-dialog'; 
 import { useAuth } from '@/contexts/auth-context';
+import { useTechnicalMode } from '@/contexts/technical-mode-context'; // Import useTechnicalMode
 
 interface SuppliersTableProps {
   suppliers: Supplier[];
   userRole?: User['rol'];
+  onSupplierUpdated: (updatedSupplier: Supplier) => void;
+  onSupplierDeleted: (supplierId: string) => void;
 }
 
-export function SuppliersTable({ suppliers: initialSuppliers, userRole }: SuppliersTableProps) {
+export function SuppliersTable({ suppliers, userRole, onSupplierUpdated, onSupplierDeleted }: SuppliersTableProps) {
   const { toast } = useToast();
   const { user } = useAuth();
-  const [suppliers, setSuppliers] = useState<Supplier[]>(initialSuppliers);
+  const { addMongoCommand } = useTechnicalMode(); // Use the hook
   const [isDeleting, setIsDeleting] = useState<Record<string, boolean>>({});
   const [isPending, startTransition] = useTransition();
   const canManageSuppliers = userRole === 'admin' || userRole === 'inventory_manager';
 
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedSupplierForEdit, setSelectedSupplierForEdit] = useState<Supplier | null>(null);
-
-  React.useEffect(() => {
-    setSuppliers(initialSuppliers);
-  }, [initialSuppliers]);
 
   const handleDeleteSupplier = async (supplierId: string, supplierName: string) => {
     if (!canManageSuppliers) {
@@ -59,13 +58,17 @@ export function SuppliersTable({ suppliers: initialSuppliers, userRole }: Suppli
       toast({ title: 'Error de autenticación', description: 'No se pudo identificar al usuario para la bitácora.', variant: 'destructive' });
       return;
     }
+
+    const simulatedCommand = `db.suppliers.deleteOne({ _id: ObjectId("${supplierId}") }); // Proveedor: ${supplierName}`;
+    addMongoCommand(simulatedCommand);
+
     setIsDeleting(prev => ({ ...prev, [supplierId]: true }));
     startTransition(async () => {
       const result = await deleteSupplierAction(supplierId, supplierName, user.id);
       setIsDeleting(prev => ({ ...prev, [supplierId]: false }));
 
       if (result.success) {
-        setSuppliers(prevSuppliers => prevSuppliers.filter(supplier => supplier.id !== supplierId));
+        onSupplierDeleted(supplierId); 
         toast({
           title: 'Proveedor Eliminado',
           description: `El proveedor "${supplierName}" ha sido eliminado correctamente.`,
@@ -181,8 +184,14 @@ export function SuppliersTable({ suppliers: initialSuppliers, userRole }: Suppli
           open={isEditDialogOpen}
           onOpenChange={setIsEditDialogOpen}
           supplier={selectedSupplierForEdit}
+          onSupplierUpdated={(updatedSupplier) => {
+            onSupplierUpdated(updatedSupplier); 
+            setIsEditDialogOpen(false); 
+          }}
         />
       )}
     </>
   );
 }
+
+    

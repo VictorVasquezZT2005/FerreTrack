@@ -29,16 +29,19 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { EditUserDialog } from './edit-user-dialog'; 
+import { useTechnicalMode } from '@/contexts/technical-mode-context'; // Import useTechnicalMode
 
 interface UsersTableProps {
   users: Omit<User, 'password'>[];
   userRole?: User['rol'];
+  onUserUpdated: (updatedUser: Omit<User, 'password'>) => void;
+  onUserDeleted: (userId: string) => void;
 }
 
-export function UsersTable({ users: initialUsers, userRole }: UsersTableProps) {
+export function UsersTable({ users, userRole, onUserUpdated, onUserDeleted }: UsersTableProps) {
   const { toast } = useToast();
   const { user: currentUser } = useAuth(); 
-  const [users, setUsers] = useState<Omit<User, 'password'>[]>(initialUsers);
+  const { addMongoCommand } = useTechnicalMode(); // Use the hook
   const [isDeleting, setIsDeleting] = useState<Record<string, boolean>>({});
   const [isPending, startTransition] = useTransition();
   const isAdmin = userRole === 'admin';
@@ -46,9 +49,6 @@ export function UsersTable({ users: initialUsers, userRole }: UsersTableProps) {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedUserForEdit, setSelectedUserForEdit] = useState<Omit<User, 'password' | 'lastUpdated'> | null>(null);
 
-  React.useEffect(() => {
-    setUsers(initialUsers);
-  }, [initialUsers]);
 
   const handleDeleteUser = async (userId: string, userName: string) => {
     if (!isAdmin) {
@@ -68,13 +68,16 @@ export function UsersTable({ users: initialUsers, userRole }: UsersTableProps) {
       return;
     }
 
+    const simulatedCommand = `db.users.deleteOne({ _id: ObjectId("${userId}") }); // Usuario: ${userName}`;
+    addMongoCommand(simulatedCommand);
+
     setIsDeleting(prev => ({ ...prev, [userId]: true }));
     startTransition(async () => {
       const result = await deleteUserAction(userId, userName, currentUser.id);
       setIsDeleting(prev => ({ ...prev, [userId]: false }));
 
       if (result.success) {
-        setUsers(prevUsers => prevUsers.filter(user => user.id !== userId));
+        onUserDeleted(userId); 
         toast({
           title: 'Usuario Eliminado',
           description: `El usuario "${userName}" ha sido eliminado correctamente.`,
@@ -193,8 +196,14 @@ export function UsersTable({ users: initialUsers, userRole }: UsersTableProps) {
           open={isEditDialogOpen}
           onOpenChange={setIsEditDialogOpen}
           user={selectedUserForEdit}
+          onUserUpdated={(updatedUser) => { 
+            onUserUpdated(updatedUser);
+            setIsEditDialogOpen(false);
+          }}
         />
       )}
     </>
   );
 }
+
+    

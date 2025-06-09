@@ -9,9 +9,10 @@ import type { User } from '@/lib/types';
 
 interface UserActionsProps {
   userRole?: User['rol'];
+  onUserAdded: (newUser: Omit<User, 'password'>) => void; // Callback prop
 }
 
-export function UserActions({ userRole }: UserActionsProps) {
+export function UserActions({ userRole, onUserAdded }: UserActionsProps) {
   const [isAddUserDialogOpen, setIsAddUserDialogOpen] = useState(false);
   const isAdmin = userRole === 'admin';
 
@@ -24,7 +25,12 @@ export function UserActions({ userRole }: UserActionsProps) {
           </Button>
         )}
       </div>
-      {isAdmin && <AddUserDialog open={isAddUserDialogOpen} onOpenChange={setIsAddUserDialogOpen} />}
+      {isAdmin && 
+        <AddUserDialog 
+            open={isAddUserDialogOpen} 
+            onOpenChange={setIsAddUserDialogOpen} 
+            onUserAdded={onUserAdded} // Pass callback
+        />}
     </>
   );
 }

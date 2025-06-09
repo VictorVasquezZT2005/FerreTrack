@@ -34,8 +34,10 @@ import {
   updateSaleDetails as dbUpdateSaleDetails,
   addAuditLogInternal, // For internal use by logAuditAction
   getAuditLogs as dbGetAuditLogs, // For fetching logs
+  getSalesSummaryByMonth as dbGetSalesSummaryByMonth, // For aggregation report
+  getAdminCollectionData as dbGetAdminCollectionData, // For admin data explorer
 } from './store';
-import type { AuditLogEntry, InventoryItem, NewInventoryItemFormValues, UpdateStockFormValues, Supplier, SupplierFormValues, User, UserFormValues, LoginCredentials, EditInventoryItemFormValues, Customer, CustomerFormValues, CreateSaleFormValues, SaleItemFormValues, Sale, SaleItem, PaymentMethod, UnitType } from './types';
+import type { AuditLogEntry, InventoryItem, NewInventoryItemFormValues, UpdateStockFormValues, Supplier, SupplierFormValues, User, UserFormValues, LoginCredentials, EditInventoryItemFormValues, Customer, CustomerFormValues, CreateSaleFormValues, SaleItemFormValues, Sale, SaleItem, PaymentMethod, UnitType, SalesSummary, AdminCollectionDataParams, AllowedCollectionNames } from './types';
 // SellingUnit type is no longer used directly in actions layer after reversion.
 
 const NO_CUSTOMER_SELECTED_VALUE = "__NO_CUSTOMER__"; // Matches the value used in client-side Selects
@@ -46,7 +48,7 @@ export async function logAuditAction(
   actionType: string,
   details: Record<string, any> = {}
 ) {
-  console.log(`[logAuditAction] Called with actorUserId: ${actorUserId}, actionType: ${actionType}`);
+  // console.log(`[logAuditAction] Called with actorUserId: ${actorUserId}, actionType: ${actionType}`);
   let actorName = 'Usuario Desconocido';
   let actorRole: User['rol'] | 'Desconocido' = 'Desconocido';
 
@@ -56,16 +58,16 @@ export async function logAuditAction(
       if (actor) {
         actorName = actor.nombre;
         actorRole = actor.rol;
-        console.log(`[logAuditAction] Actor details fetched: Name=${actorName}, Role=${actorRole}`);
+        // console.log(`[logAuditAction] Actor details fetched: Name=${actorName}, Role=${actorRole}`);
       } else {
-        console.warn(`[logAuditAction] Actor user not found for ID: ${actorUserId}. Logging with default actor info.`);
+        // console.warn(`[logAuditAction] Actor user not found for ID: ${actorUserId}. Logging with default actor info.`);
       }
     } catch (fetchError: any) {
-      console.error(`[logAuditAction] Error fetching actor details for ID ${actorUserId}:`, fetchError.message);
+      // console.error(`[logAuditAction] Error fetching actor details for ID ${actorUserId}:`, fetchError.message);
       // Proceed with default actor info
     }
   } else {
-     console.warn(`[logAuditAction] Invalid actorUserId format: ${actorUserId}. Audit log entry will use default actor info.`);
+    //  console.warn(`[logAuditAction] Invalid actorUserId format: ${actorUserId}. Audit log entry will use default actor info.`);
   }
 
   const logEntryData: Omit<AuditLogEntry, 'id'> = {
@@ -77,11 +79,11 @@ export async function logAuditAction(
     details,
   };
 
-  console.log('[logAuditAction] Attempting to log audit entry:', JSON.stringify(logEntryData, null, 2));
+  // console.log('[logAuditAction] Attempting to log audit entry:', JSON.stringify(logEntryData, null, 2));
   try {
     await addAuditLogInternal(logEntryData);
   } catch (error: any) {
-    console.error('[logAuditAction] Failed to create audit log entry via addAuditLogInternal:', error.message);
+    // console.error('[logAuditAction] Failed to create audit log entry via addAuditLogInternal:', error.message);
   }
 }
 
@@ -153,7 +155,6 @@ export async function addNewInventoryItemAction(
   const validatedFields = NewInventoryItemServerSchema.safeParse(formData);
 
   if (!validatedFields.success) {
-    console.error("Server validation errors (addNewInventoryItemAction):", JSON.stringify(validatedFields.error.flatten(), null, 2));
     return {
       success: false,
       error: "Falló la validación del servidor",
@@ -188,7 +189,6 @@ export async function addNewInventoryItemAction(
     }
     return { success: false, error: "Error desconocido al añadir el artículo." };
   } catch (error: any) {
-    console.error("Error añadiendo artículo de inventario:", error);
     return { success: false, error: error.message || "Error al añadir el artículo al inventario." };
   }
 }
@@ -201,7 +201,6 @@ export async function updateInventoryItemDetailsAction(
   const validatedFields = EditInventoryItemServerSchema.safeParse(formData); 
 
   if (!validatedFields.success) {
-    console.error("Server validation errors (updateInventoryItemDetailsAction):", JSON.stringify(validatedFields.error.flatten(), null, 2));
     return {
       success: false,
       error: "Falló la validación del servidor para editar el artículo.",
@@ -234,7 +233,6 @@ export async function updateInventoryItemDetailsAction(
       return { success: false, error: "Artículo no encontrado o no se pudo actualizar." };
     }
   } catch (error: any) {
-    console.error("Error actualizando detalles del artículo:", error);
     return { success: false, error: error.message || "Error al actualizar los detalles del artículo." };
   }
 }
@@ -279,7 +277,6 @@ export async function increaseStockByCodeAction(
         return { success: false, error: "Error al actualizar el stock, o artículo original no encontrado." };
     }
   } catch (error: any) {
-    console.error("Error al incrementar stock por código:", error);
     return { success: false, error: error.message || "Error al incrementar el stock." };
   }
 }
@@ -300,7 +297,6 @@ export async function deleteInventoryItemAction(
       return { success: false, error: "Artículo no encontrado o no se pudo eliminar." };
     }
   } catch (error: any) {
-    console.error("Error eliminando artículo de inventario:", error);
     return { success: false, error: error.message || "Error al eliminar el artículo del inventario." };
   }
 }
@@ -348,7 +344,6 @@ export async function addNewSupplierAction(
     await logAuditAction(actorUserId, 'CREATE_SUPPLIER', { supplierId: newSupplier.id, supplierName: newSupplier.name });
     return { success: true, supplier: newSupplier };
   } catch (error: any) {
-    console.error("Error añadiendo proveedor:", error);
     return { success: false, error: error.message || "Error al añadir el proveedor." };
   }
 }
@@ -387,7 +382,6 @@ export async function updateSupplierAction(
       return { success: false, error: "Proveedor no encontrado o no se pudo actualizar." };
     }
   } catch (error: any) {
-    console.error("Error actualizando proveedor:", error);
     return { success: false, error: error.message || "Error al actualizar el proveedor." };
   }
 }
@@ -407,32 +401,54 @@ export async function deleteSupplierAction(
       return { success: false, error: "Proveedor no encontrado o no se pudo eliminar." };
     }
   } catch (error: any) {
-    console.error("Error eliminando proveedor:", error);
     return { success: false, error: error.message || "Error al eliminar el proveedor." };
   }
 }
 
 
 // --- User Schemas and Actions ---
-const UserServerSchema = z.object({
-  id: z.string().optional(),
+const UserActionPayloadSchema = z.object({
   nombre: z.string().min(2, "El nombre debe tener al menos 2 caracteres."),
   email: z.string().email("Introduce un email válido."),
   rol: z.enum(['admin', 'empleado', 'inventory_manager']),
   password: z.string().optional(),
-})
-.refine(data => {
-  if (!data.id && (!data.password || data.password.length < 6)) {
-    return false;
-  }
-  if (data.password && data.password.length > 0 && data.password.length < 6) {
-    return false;
-  }
-  return true;
-}, {
-  message: "La contraseña debe tener al menos 6 caracteres si se proporciona. Es obligatoria para nuevos usuarios.",
-  path: ["password"],
+  confirmPassword: z.string().optional(),
 });
+
+const AddUserServerSchema = UserActionPayloadSchema
+  .refine(data => {
+    if (!data.password || data.password.length < 6) {
+      return false;
+    }
+    return true;
+  }, {
+    message: "La contraseña es obligatoria y debe tener al menos 6 caracteres.",
+    path: ["password"],
+  })
+  .refine(data => data.password === data.confirmPassword, {
+    message: "Las contraseñas no coinciden.",
+    path: ["confirmPassword"],
+  });
+
+const UpdateUserServerSchema = UserActionPayloadSchema
+  .refine(data => {
+    if (data.password && data.password.length > 0 && data.password.length < 6) {
+      return false;
+    }
+    return true;
+  }, {
+    message: "Si se proporciona una nueva contraseña, debe tener al menos 6 caracteres.",
+    path: ["password"],
+  })
+  .refine(data => {
+    if (data.password) {
+      return data.password === data.confirmPassword;
+    }
+    return true; 
+  }, {
+    message: "Las contraseñas no coinciden.",
+    path: ["confirmPassword"],
+  });
 
 
 export async function fetchUsersAction(): Promise<Omit<User, 'password'>[]> {
@@ -443,8 +459,9 @@ export async function addNewUserAction(
   formData: UserFormValues,
   actorUserId: string
 ) {
-  const { confirmPassword, ...userDataToValidate } = formData; 
-  const validatedFields = UserServerSchema.omit({id: true}).safeParse(userDataToValidate);
+  const { id, ...userDataToValidate } = formData; 
+  
+  const validatedFields = AddUserServerSchema.safeParse(userDataToValidate);
 
   if (!validatedFields.success) {
     return {
@@ -453,13 +470,10 @@ export async function addNewUserAction(
       fieldErrors: validatedFields.error.flatten().fieldErrors,
     };
   }
-
-  const { password, ...restOfData } = validatedFields.data;
-  if (!password) { 
-    return { success: false, error: "La contraseña es obligatoria para nuevos usuarios." };
-  }
   
-  const userDataForDb = { ...restOfData, password };
+  const { password, confirmPassword, ...restOfData } = validatedFields.data;
+  
+  const userDataForDb = { ...restOfData, password: password! }; 
 
   try {
     const result = await dbAddUser(userDataForDb);
@@ -471,7 +485,6 @@ export async function addNewUserAction(
       return { success: false, error: result.error || "Error desconocido al añadir usuario." };
     }
   } catch (error: any) {
-    console.error("Error añadiendo usuario:", error);
     return { success: false, error: error.message || "Error al añadir el usuario." };
   }
 }
@@ -481,9 +494,9 @@ export async function updateUserAction(
   formData: UserFormValues,
   actorUserId: string
 ) {
-  const { confirmPassword, id, ...userDataToValidate } = formData; 
-  
-  const validatedFields = UserServerSchema.omit({id: true}).safeParse(userDataToValidate);
+  const { id, ...userDataToValidate } = formData; 
+
+  const validatedFields = UpdateUserServerSchema.safeParse(userDataToValidate);
 
   if (!validatedFields.success) {
     return {
@@ -493,12 +506,13 @@ export async function updateUserAction(
     };
   }
   
-  const { password, ...restOfData } = validatedFields.data;
+  const { password, confirmPassword, ...restOfData } = validatedFields.data;
   const dataForDb: Partial<Omit<User, 'id' | 'lastUpdated'>> & { password?: string } = { ...restOfData };
+  
   if (password && password.length > 0) {
-    dataForDb.password = password;
+    dataForDb.password = password; 
   }
-
+  
   try {
     const originalUser = await dbGetUserById(userIdToUpdate);
     if (!originalUser) {
@@ -525,7 +539,6 @@ export async function updateUserAction(
       return { success: false, error: "Usuario no encontrado o no se pudo actualizar." };
     }
   } catch (error: any) {
-    console.error("Error actualizando usuario:", error);
     return { success: false, error: error.message || "Error al actualizar el usuario." };
   }
 }
@@ -549,7 +562,6 @@ export async function deleteUserAction(
       return { success: false, error: "Usuario no encontrado o no se pudo eliminar." };
     }
   } catch (error: any) {
-    console.error("Error eliminando usuario:", error);
     return { success: false, error: error.message || "Error al eliminar el usuario." };
   }
 }
@@ -568,7 +580,6 @@ export async function loginUserAction(credentials: LoginCredentials) {
       return { success: false, error: 'Nombre de usuario o contraseña incorrectos.' };
     }
   } catch (error: any) {
-    console.error("Error en loginUserAction:", error);
     return { success: false, error: 'Ocurrió un error en el servidor. Inténtalo más tarde.' };
   }
 }
@@ -604,7 +615,6 @@ export async function addNewCustomerAction(
     await logAuditAction(actorUserId, 'CREATE_CUSTOMER', { customerId: newCustomer.id, customerName: newCustomer.name });
     return { success: true, customer: newCustomer };
   } catch (error: any) {
-    console.error("Error añadiendo cliente:", error);
     return { success: false, error: error.message || "Error al añadir el cliente." };
   }
 }
@@ -639,7 +649,6 @@ export async function updateCustomerAction(
       return { success: false, error: "Cliente no encontrado o no se pudo actualizar." };
     }
   } catch (error: any) {
-    console.error("Error actualizando cliente:", error);
     return { success: false, error: error.message || "Error al actualizar el cliente." };
   }
 }
@@ -659,24 +668,21 @@ export async function deleteCustomerAction(
       return { success: false, error: "Cliente no encontrado o no se pudo eliminar." };
     }
   } catch (error: any) {
-    console.error("Error eliminando cliente:", error);
     return { success: false, error: error.message || "Error al eliminar el cliente." };
   }
 }
 
 // --- Sale Schemas and Actions ---
-// Server-side schema for SaleItem in the CreateSaleForm
 const SaleItemServerFormSchema = z.object({ 
   inventoryItemId: z.string().min(1, "ID de artículo de inventario es requerido."),
   productCode: z.string(),
   productName: z.string(),
-  unitName: z.string(), // Unit name of the product
-  unitPrice: z.number().min(0), // Price per unit
+  unitName: z.string(), 
+  unitPrice: z.number().min(0), 
   quantityToSell: z.string().refine(val => parseFloat(val) > 0, "La cantidad debe ser un número positivo."),
-  availableStock: z.number().min(0), // Current stock of the product
+  availableStock: z.number().min(0), 
 });
 
-// Server-side schema for the CreateSaleForm
 const CreateSaleServerFormSchema = z.object({ 
   customerId: z.string().optional(),
   items: z.array(SaleItemServerFormSchema).min(1, "Debe añadir al menos un artículo a la venta."),
@@ -687,12 +693,11 @@ export async function createSaleAction(
   actorUserId: string,
   formData: CreateSaleFormValues 
 ): Promise<{ success: boolean; sale?: Sale; error?: string; stockError?: string; fieldErrors?: any }> {
-
+  
   const validatedFields = CreateSaleServerFormSchema.safeParse(formData);
 
   if (!validatedFields.success) {
     const fieldErrors = validatedFields.error.flatten().fieldErrors;
-    console.error("Server-side validation failed for CreateSale:", JSON.stringify(fieldErrors, null, 2));
     
     let specificError = "Falló la validación de la venta en el servidor.";
     if (fieldErrors?.items && typeof fieldErrors.items === 'string') {
@@ -719,8 +724,8 @@ export async function createSaleAction(
       productCode: item.productCode,
       productName: item.productName,
       quantitySold: quantityNum,
-      unitNameAtSale: item.unitName, // Store the unit name at sale time
-      priceAtSale: item.unitPrice, // This is the unitPrice of the inventoryItem
+      unitNameAtSale: item.unitName, 
+      priceAtSale: item.unitPrice, 
       subtotal: quantityNum * item.unitPrice,
   }});
 
@@ -752,11 +757,9 @@ export async function createSaleAction(
       return { success: false, stockError: result.stockError };
     } else {
       const errorMessage = result.error || "Error desconocido del servidor al intentar crear la venta.";
-      console.warn(`createSaleAction: dbAddSale did not return a sale or stockError. Error from dbAddSale: ${result.error}`);
       return { success: false, error: errorMessage };
     }
   } catch (error: any) {
-    console.error("Error creando venta (createSaleAction catch):", error);
     const message = error.message || "Se produjo un error interno del servidor al crear la venta.";
     return { success: false, error: message };
   }
@@ -776,7 +779,6 @@ export async function deleteSaleAction(
   actorUserId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    // Stock restoration happens in dbDeleteSaleAndRestoreStock
     const result = await dbDeleteSaleAndRestoreStock(saleId); 
     if (result.success) {
       revalidatePath('/sales');
@@ -787,7 +789,6 @@ export async function deleteSaleAction(
       return { success: false, error: result.error || "No se pudo eliminar la venta o restaurar el stock." };
     }
   } catch (error: any) {
-    console.error("Error eliminando venta:", error);
     return { success: false, error: error.message || "Error al eliminar la venta." };
   }
 }
@@ -848,8 +849,27 @@ export async function updateSaleAction(
       return { success: false, error: "Venta no encontrada o no se pudo actualizar." };
     }
   } catch (error: any) {
-    console.error("Error actualizando venta:", error);
     return { success: false, error: error.message || "Error al actualizar la venta." };
+  }
+}
+
+// --- Aggregation Actions ---
+export async function fetchSalesSummaryByMonthAction(): Promise<{ success: boolean; summary?: SalesSummary[]; error?: string }> {
+  try {
+    const summary = await dbGetSalesSummaryByMonth();
+    return { success: true, summary };
+  } catch (error: any) {
+    return { success: false, error: "No se pudo cargar el resumen de ventas por mes." };
+  }
+}
+
+// --- Admin Data Explorer Actions ---
+export async function fetchAdminCollectionDataAction(params: AdminCollectionDataParams): Promise<{ success: boolean; documents?: any[]; totalDocuments?: number; error?: string; }> {
+  try {
+    const { documents, totalDocuments } = await dbGetAdminCollectionData(params);
+    return { success: true, documents, totalDocuments };
+  } catch (error: any) {
+    return { success: false, error: (error as Error).message || "Error al obtener datos de la colección." };
   }
 }
 

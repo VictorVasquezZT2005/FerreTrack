@@ -36,7 +36,8 @@ import { updateSaleAction, fetchCustomersAction } from '@/lib/actions';
 import type { Sale, Customer, EditSaleFormValues, PaymentMethod } from '@/lib/types';
 import { EditSaleClientSchema } from '@/lib/form-schemas';
 import { Loader2, UserCircleIcon, CreditCard, Landmark } from 'lucide-react';
-import { useAuth } from '@/contexts/auth-context'; // Added useAuth
+import { useAuth } from '@/contexts/auth-context'; 
+import { useTechnicalMode } from '@/contexts/technical-mode-context'; // Import useTechnicalMode
 
 const NO_CUSTOMER_SELECTED_VALUE = "__NO_CUSTOMER__";
 
@@ -49,7 +50,8 @@ interface EditSaleDialogProps {
 
 export function EditSaleDialog({ open, onOpenChange, sale, onSaleUpdated }: EditSaleDialogProps) {
   const { toast } = useToast();
-  const { user: actorUser } = useAuth(); // Get user for actorUserId
+  const { user: actorUser } = useAuth(); 
+  const { addMongoCommand } = useTechnicalMode(); // Use the hook
   const [isPending, startTransition] = useTransition();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [isLoadingCustomers, setIsLoadingCustomers] = useState(true);
@@ -73,6 +75,7 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaleUpdated }: Edit
 
       async function loadCustomers() {
         setIsLoadingCustomers(true);
+        addMongoCommand('db.customers.find({}).sort({ name: 1 }); // For EditSaleDialog');
         try {
           const fetchedCustomers = await fetchCustomersAction();
           setCustomers(fetchedCustomers);
@@ -84,14 +87,32 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaleUpdated }: Edit
       }
       loadCustomers();
     }
-  }, [open, sale, form, toast]);
+  }, [open, sale, form, toast, addMongoCommand]);
 
   async function onSubmit(values: EditSaleFormValues) {
+    if (!actorUser?.id) {
+      toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario para la bitácora.", variant: "destructive" });
+      return;
+    }
+
+    const updatePayload: any = { lastUpdated: "CURRENT_TIMESTAMP" };
+    if (values.paymentMethod !== sale.paymentMethod) {
+      updatePayload.paymentMethod = values.paymentMethod;
+    }
+    const newCustomerId = values.customerId === NO_CUSTOMER_SELECTED_VALUE ? undefined : values.customerId;
+    if (newCustomerId !== sale.customerId) {
+      updatePayload.customerId = newCustomerId;
+      const selectedCustomer = customers.find(c => c.id === newCustomerId);
+      updatePayload.customerName = selectedCustomer ? selectedCustomer.name : undefined;
+    }
+    
+    if (Object.keys(updatePayload).length > 1) { // more than just lastUpdated
+        const simulatedCommand = `db.sales.updateOne(\n  { _id: ObjectId("${sale.id}") },\n  { $set: ${JSON.stringify(updatePayload, null, 2)} }\n); // Editing sale ${sale.saleNumber}`;
+        addMongoCommand(simulatedCommand);
+    }
+
+
     startTransition(async () => {
-      if (!actorUser?.id) {
-        toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario para la bitácora.", variant: "destructive" });
-        return;
-      }
       const result = await updateSaleAction(values, actorUser.id);
       if (result.success && result.sale) {
         onSaleUpdated(result.sale);
@@ -204,3 +225,5 @@ export function EditSaleDialog({ open, onOpenChange, sale, onSaleUpdated }: Edit
     </Dialog>
   );
 }
+
+    

@@ -1,7 +1,7 @@
 
 'use client';
 
-import type { InventoryItem, User } from '@/lib/types'; // SellingUnit removed
+import type { InventoryItem, User } from '@/lib/types'; 
 import {
   Table,
   TableBody,
@@ -36,10 +36,13 @@ import {
 import { cn } from '@/lib/utils';
 import { EditInventoryItemDialog } from './edit-inventory-item-dialog';
 import { useAuth } from '@/contexts/auth-context';
+import { useTechnicalMode } from '@/contexts/technical-mode-context'; // Import useTechnicalMode
 
 interface InventoryTableProps {
   initialItems: InventoryItem[];
   userRole?: User['rol'];
+  onItemUpdated: (updatedItem: InventoryItem) => void; // For detail edits and potentially stock updates from here
+  onItemDeleted: (deletedItemId: string) => void;
 }
 
 type SortConfig = {
@@ -47,10 +50,10 @@ type SortConfig = {
   direction: 'ascending' | 'descending';
 };
 
-export function InventoryTable({ initialItems, userRole }: InventoryTableProps) {
+export function InventoryTable({ initialItems, userRole, onItemUpdated, onItemDeleted }: InventoryTableProps) {
   const { toast } = useToast();
   const { user } = useAuth();
-  const [items, setItems] = useState<InventoryItem[]>(initialItems);
+  const { addMongoCommand } = useTechnicalMode(); // Use the hook
   const [filterQuery, setFilterQuery] = useState<string>('');
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'name', direction: 'ascending' });
   const [isDeleting, setIsDeleting] = useState<Record<string, boolean>>({});
@@ -61,10 +64,6 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
 
   const canManageInventory = userRole === 'admin' || userRole === 'inventory_manager';
 
-  useEffect(() => {
-    setItems(initialItems);
-  }, [initialItems]);
-
   const handleDeleteItem = async (itemId: string, itemName: string, itemCode: string) => {
     if (!canManageInventory) {
       toast({ title: 'Acción no permitida', description: 'No tienes permisos para eliminar artículos.', variant: 'destructive' });
@@ -74,13 +73,17 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
       toast({ title: 'Error de autenticación', description: 'No se pudo identificar al usuario para la bitácora.', variant: 'destructive' });
       return;
     }
+
+    const simulatedCommand = `db.inventoryItems.deleteOne({ _id: ObjectId("${itemId}") }); // Item: ${itemName}, Code: ${itemCode}`;
+    addMongoCommand(simulatedCommand);
+
     setIsDeleting(prev => ({ ...prev, [itemId]: true }));
     startTransition(async () => {
       const result = await deleteInventoryItemAction(itemId, itemName, itemCode, user.id);
       setIsDeleting(prev => ({ ...prev, [itemId]: false }));
 
       if (result.success) {
-        setItems(prevItems => prevItems.filter(item => item.id !== itemId));
+        onItemDeleted(itemId); 
         toast({
           title: 'Artículo Eliminado',
           description: `El artículo "${itemName}" ha sido eliminado correctamente.`,
@@ -111,7 +114,7 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
   };
 
   const sortedAndFilteredItems = useMemo(() => {
-    let sortableItems = [...items];
+    let sortableItems = [...initialItems]; 
     if (filterQuery) {
       const lowerCaseQuery = filterQuery.toLowerCase();
       sortableItems = sortableItems.filter(item =>
@@ -142,7 +145,18 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
       });
     }
     return sortableItems;
-  }, [items, filterQuery, sortConfig]);
+  }, [initialItems, filterQuery, sortConfig]);
+
+  useEffect(() => {
+    // Simulate find command when initial items are loaded or filter changes
+    // This is a bit broad, could be refined to only run once on load,
+    // or be more specific about when 'find' is "executed".
+    const filterPart = filterQuery ? `{ $or: [ { name: /${filterQuery}/i }, { code: /${filterQuery}/i }, ... ] }` : "{}";
+    const sortPart = `{ ${sortConfig.key || 'name'}: ${sortConfig.direction === 'ascending' ? 1 : -1} }`;
+    const simulatedFindCommand = `db.inventoryItems.find(${filterPart}).sort(${sortPart});`;
+    // addMongoCommand(simulatedFindCommand); // Decided to comment this out for now to avoid too many "find" logs on every keystroke in filter
+  }, [filterQuery, sortConfig, addMongoCommand]);
+
 
   const renderSortIcon = (columnKey: keyof InventoryItem) => {
     if (sortConfig.key !== columnKey) {
@@ -154,7 +168,7 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
   };
 
 
-  if (items.length === 0 && initialItems.length === 0 && !filterQuery) {
+  if (initialItems.length === 0 && !filterQuery) {
      return <p className="text-muted-foreground text-center py-8">Aún no hay artículos en el inventario. ¡Añade algunos para empezar!</p>;
   }
 
@@ -324,7 +338,7 @@ export function InventoryTable({ initialItems, userRole }: InventoryTableProps) 
         onOpenChange={setIsEditDialogOpen}
         item={selectedItemForEdit}
         onItemUpdated={(updatedItem) => {
-          setItems(prevItems => prevItems.map(i => i.id === updatedItem.id ? updatedItem : i));
+          onItemUpdated(updatedItem); 
         }}
       />
     )}
@@ -347,3 +361,5 @@ function getCategoryNameByCodePrefix(prefix: string): string | undefined {
     };
     return CATEGORY_CODES[prefix];
 }
+
+    

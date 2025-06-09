@@ -6,13 +6,15 @@ import { PlusCircle, Layers } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AddInventoryItemDialog } from '@/components/add-inventory-item-dialog';
 import { UpdateStockDialog } from '@/components/update-stock-dialog';
-import type { User } from '@/lib/types';
+import type { User, InventoryItem } from '@/lib/types';
 
 interface InventoryActionsProps {
   userRole?: User['rol'];
+  onItemAdded: (item: InventoryItem) => void;
+  onItemUpdated: (item: InventoryItem) => void; // For stock updates
 }
 
-export function InventoryActions({ userRole }: InventoryActionsProps) {
+export function InventoryActions({ userRole, onItemAdded, onItemUpdated }: InventoryActionsProps) {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isUpdateStockDialogOpen, setIsUpdateStockDialogOpen] = useState(false);
   
@@ -32,8 +34,18 @@ export function InventoryActions({ userRole }: InventoryActionsProps) {
           </Button>
         )}
       </div>
-      {canManageInventory && <AddInventoryItemDialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen} />}
-      {canManageInventory && <UpdateStockDialog open={isUpdateStockDialogOpen} onOpenChange={setIsUpdateStockDialogOpen} />}
+      {canManageInventory && 
+        <AddInventoryItemDialog 
+          open={isAddDialogOpen} 
+          onOpenChange={setIsAddDialogOpen} 
+          onItemAdded={onItemAdded}
+        />}
+      {canManageInventory && 
+        <UpdateStockDialog 
+            open={isUpdateStockDialogOpen} 
+            onOpenChange={setIsUpdateStockDialogOpen} 
+            onStockUpdated={onItemUpdated} // Pass onItemUpdated as onStockUpdated
+        />}
     </>
   );
 }

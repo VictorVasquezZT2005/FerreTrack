@@ -29,7 +29,8 @@ import { CustomerClientSchema } from '@/lib/form-schemas';
 import type { Customer, CustomerFormValues } from '@/lib/types';
 import { Loader2 } from 'lucide-react';
 import React, { useEffect, useTransition } from 'react';
-import { useAuth } from '@/contexts/auth-context'; // Added useAuth
+import { useAuth } from '@/contexts/auth-context'; 
+import { useTechnicalMode } from '@/contexts/technical-mode-context'; // Import useTechnicalMode
 
 interface EditCustomerDialogProps {
   open: boolean;
@@ -42,7 +43,8 @@ const formSchema = CustomerClientSchema.omit({ id: true });
 
 export function EditCustomerDialog({ open, onOpenChange, customer, onCustomerUpdated }: EditCustomerDialogProps) {
   const { toast } = useToast();
-  const { user } = useAuth(); // Get user for actorUserId
+  const { user } = useAuth(); 
+  const { addMongoCommand } = useTechnicalMode(); // Use the hook
   const [isPending, startTransition] = useTransition();
 
   const form = useForm<Omit<CustomerFormValues, 'id'>>({
@@ -69,11 +71,26 @@ export function EditCustomerDialog({ open, onOpenChange, customer, onCustomerUpd
   }, [customer, open, form]);
 
   async function onSubmit(values: Omit<CustomerFormValues, 'id'>) {
+    if (!user?.id) {
+      toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario para la bitácora.", variant: "destructive" });
+      return;
+    }
+
+    const updateFields: any = {};
+    if (values.name !== customer.name) updateFields.name = values.name;
+    if (values.email !== customer.email) updateFields.email = values.email || '';
+    if (values.phone !== customer.phone) updateFields.phone = values.phone || '';
+    if (values.address !== customer.address) updateFields.address = values.address || '';
+    if (values.ruc !== customer.ruc) updateFields.ruc = values.ruc || '';
+    
+    if (Object.keys(updateFields).length > 0) {
+      updateFields.lastUpdated = "CURRENT_TIMESTAMP";
+    }
+
+    const simulatedCommand = `db.customers.updateOne(\n  { _id: ObjectId("${customer.id}") },\n  { $set: ${JSON.stringify(updateFields, null, 2)} }\n);`;
+    addMongoCommand(simulatedCommand);
+
     startTransition(async () => {
-      if (!user?.id) {
-        toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario para la bitácora.", variant: "destructive" });
-        return;
-      }
       const result = await updateCustomerAction(customer.id, values, user.id);
       if (result.success && result.customer) {
         toast({
@@ -187,3 +204,5 @@ export function EditCustomerDialog({ open, onOpenChange, customer, onCustomerUpd
     </Dialog>
   );
 }
+
+    

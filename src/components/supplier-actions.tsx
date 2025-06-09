@@ -5,13 +5,14 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { PlusCircle } from 'lucide-react';
 import { AddSupplierDialog } from '@/components/add-supplier-dialog';
-import type { User } from '@/lib/types';
+import type { User, Supplier } from '@/lib/types'; // Added Supplier type
 
 interface SupplierActionsProps {
   userRole?: User['rol'];
+  onSupplierAdded: (newSupplier: Supplier) => void; // Callback prop
 }
 
-export function SupplierActions({ userRole }: SupplierActionsProps) {
+export function SupplierActions({ userRole, onSupplierAdded }: SupplierActionsProps) {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const canManageSuppliers = userRole === 'admin' || userRole === 'inventory_manager';
 
@@ -24,7 +25,12 @@ export function SupplierActions({ userRole }: SupplierActionsProps) {
           </Button>
         )}
       </div>
-      {canManageSuppliers && <AddSupplierDialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen} />}
+      {canManageSuppliers && 
+        <AddSupplierDialog 
+            open={isAddDialogOpen} 
+            onOpenChange={setIsAddDialogOpen} 
+            onSupplierAdded={onSupplierAdded} // Pass callback
+        />}
     </>
   );
 }

@@ -1,7 +1,7 @@
 
 'use client';
 
-import React, { useEffect, useState, Suspense } from 'react';
+import React, { useEffect, useState, Suspense, useCallback } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { SalesTable } from '@/components/sales-table'; 
@@ -13,37 +13,43 @@ import PageLoading from '@/app/loading';
 import { PlusCircle, History, ShieldAlert } from 'lucide-react'; 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { useTechnicalMode } from '@/contexts/technical-mode-context'; // Import useTechnicalMode
 
 function SalesPageClient() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const { user, isLoading: authLoading } = useAuth();
+  const { addMongoCommand } = useTechnicalMode(); // Use the hook
   const router = useRouter();
+
+  const loadSales = useCallback(async (isInitialLoad = false) => {
+    setIsLoading(true);
+    if (isInitialLoad) {
+      addMongoCommand('db.sales.find({}).sort({ date: -1 }); // Initial load');
+    }
+    try {
+      const fetchedSales = await fetchSalesAction();
+      setSales(fetchedSales);
+    } catch (error) {
+      console.error("Error al obtener las ventas:", error);
+    }
+    setIsLoading(false);
+  }, [addMongoCommand]);
 
   useEffect(() => {
     if (!authLoading && user && user.rol === 'inventory_manager') {
-      router.push('/'); // Redirect inventory_manager
+      router.push('/'); 
       return;
     }
     
     if (!authLoading && user && (user.rol === 'admin' || user.rol === 'empleado')) {
-      async function loadSales() {
-        setIsLoading(true);
-        try {
-          const fetchedSales = await fetchSalesAction();
-          setSales(fetchedSales);
-        } catch (error) {
-          console.error("Error al obtener las ventas:", error);
-        }
-        setIsLoading(false);
-      }
-      loadSales();
+      loadSales(true); // Pass true for initial load
     } else if (!authLoading && !user) {
       router.push('/login');
     } else if (!authLoading && user && user.rol !== 'admin' && user.rol !== 'empleado') {
         router.push('/');
     }
-  }, [user, authLoading, router]);
+  }, [user, authLoading, router, loadSales]);
 
   const handleSaleDeleted = (deletedSaleId: string) => {
     setSales(prevSales => prevSales.filter(sale => sale.id !== deletedSaleId));
@@ -112,3 +118,5 @@ export default function SalesPage() {
     </Suspense>
   );
 }
+
+    

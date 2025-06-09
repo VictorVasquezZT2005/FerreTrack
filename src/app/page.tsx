@@ -25,7 +25,7 @@ export default function DashboardPage() {
             </div>
             <Button variant="outline" size="lg" onClick={() => setIsHelpDialogOpen(true)}>
               <HelpCircle className="mr-2 h-5 w-5" />
-              Ayuda IA / Tour
+              Guía Rápida
             </Button>
           </div>
         </div>

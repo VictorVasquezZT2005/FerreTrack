@@ -172,3 +172,23 @@ export type AuditLogEntry = {
   actionType: string;
   details: Record<string, any>;
 };
+
+// --- Aggregation Types ---
+export type SalesSummary = {
+  year: number;
+  month: number;
+  totalSalesAmount: number;
+  numberOfSales: number;
+};
+
+// --- Admin Data Explorer Types ---
+export type AdminCollectionDataParams = {
+  collectionName: string;
+  page?: number;
+  limit?: number;
+  filterById?: string;
+  // Add other simple filter types if needed, e.g., filterByField?: { field: string, value: string }
+};
+
+export type AllowedCollectionNames = 'inventoryItems' | 'sales' | 'users' | 'customers' | 'suppliers' | 'auditLogs';
+

@@ -24,21 +24,24 @@ import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { increaseStockByCodeAction } from '@/lib/actions';
 import { UpdateStockClientSchema } from '@/lib/form-schemas'; 
-import type { UpdateStockFormValues } from '@/lib/types';
+import type { UpdateStockFormValues, InventoryItem } from '@/lib/types'; // Added InventoryItem
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
-import { useAuth } from '@/contexts/auth-context'; // Added useAuth
+import { useAuth } from '@/contexts/auth-context'; 
+import { useTechnicalMode } from '@/contexts/technical-mode-context'; // Import useTechnicalMode
 
 const formSchema = UpdateStockClientSchema;
 
 interface UpdateStockDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onStockUpdated: (item: InventoryItem) => void; // Callback prop
 }
 
-export function UpdateStockDialog({ open, onOpenChange }: UpdateStockDialogProps) {
+export function UpdateStockDialog({ open, onOpenChange, onStockUpdated }: UpdateStockDialogProps) {
   const { toast } = useToast();
-  const { user } = useAuth(); // Get user for actorUserId
+  const { user } = useAuth(); 
+  const { addMongoCommand } = useTechnicalMode(); // Use the hook
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const form = useForm<UpdateStockFormValues>({
@@ -56,6 +59,10 @@ export function UpdateStockDialog({ open, onOpenChange }: UpdateStockDialogProps
       setIsSubmitting(false);
       return;
     }
+
+    const simulatedCommand = `db.inventoryItems.updateOne(\n  { code: "${values.code}" },\n  { \n    $inc: { quantity: ${values.quantityToAdd} },\n    $set: { lastUpdated: "CURRENT_TIMESTAMP" }\n  }\n);`;
+    addMongoCommand(simulatedCommand);
+
     const result = await increaseStockByCodeAction(values, user.id);
     setIsSubmitting(false);
 
@@ -64,6 +71,7 @@ export function UpdateStockDialog({ open, onOpenChange }: UpdateStockDialogProps
         title: 'Stock Actualizado',
         description: `Se añadieron ${values.quantityToAdd} unidades al artículo "${result.item.name}" (Código: ${result.item.code}). Nueva cantidad: ${result.item.quantity}.`,
       });
+      onStockUpdated(result.item); 
       form.reset();
       onOpenChange(false);
     } else {
@@ -137,3 +145,5 @@ export function UpdateStockDialog({ open, onOpenChange }: UpdateStockDialogProps
     </Dialog>
   );
 }
+
+    

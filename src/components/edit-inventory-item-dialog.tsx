@@ -37,6 +37,7 @@ import type { EditInventoryItemFormValues, InventoryItem, Supplier, UnitType } f
 import { Loader2, DollarSign } from 'lucide-react';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/auth-context'; 
+import { useTechnicalMode } from '@/contexts/technical-mode-context'; // Import useTechnicalMode
 
 const formSchema = EditInventoryItemClientSchema;
 const NO_SUPPLIER_OPTION_VALUE = "__#NONE#_SUPPLIER__";
@@ -51,6 +52,7 @@ interface EditInventoryItemDialogProps {
 export function EditInventoryItemDialog({ open, onOpenChange, item, onItemUpdated }: EditInventoryItemDialogProps) {
   const { toast } = useToast();
   const { user } = useAuth(); 
+  const { addMongoCommand } = useTechnicalMode(); // Use the hook
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [suppliersList, setSuppliersList] = useState<Supplier[]>([]);
   const [isLoadingSuppliers, setIsLoadingSuppliers] = useState(false);
@@ -104,6 +106,9 @@ export function EditInventoryItemDialog({ open, onOpenChange, item, onItemUpdate
       setIsSubmitting(false);
       return;
     }
+
+    const simulatedCommand = `db.inventoryItems.updateOne(\n  { _id: ObjectId("${item.id}") },\n  { $set: {\n    name: "${values.name}",\n    unitPrice: ${values.unitPrice},\n    stockMinimo: ${values.stockMinimo},\n    dailySales: ${values.dailySales},\n    category: "${values.category || ''}",\n    supplier: "${values.supplier || ''}",\n    unitType: "${values.unitType}",\n    unitName: "${values.unitName}",\n    lastUpdated: "CURRENT_TIMESTAMP"\n  }}\n);`;
+    addMongoCommand(simulatedCommand);
     
     const result = await updateInventoryItemDetailsAction(item.id, values, user.id);
     setIsSubmitting(false);
@@ -315,3 +320,5 @@ export function EditInventoryItemDialog({ open, onOpenChange, item, onItemUpdate
     </Dialog>
   );
 }
+
+    

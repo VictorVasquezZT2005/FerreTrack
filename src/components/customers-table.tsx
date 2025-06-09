@@ -27,7 +27,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { EditCustomerDialog } from './edit-customer-dialog'; 
-import { useAuth } from '@/contexts/auth-context'; // Added useAuth
+import { useAuth } from '@/contexts/auth-context'; 
+import { useTechnicalMode } from '@/contexts/technical-mode-context'; // Import useTechnicalMode
 
 interface CustomersTableProps {
   initialCustomers: Customer[];
@@ -38,7 +39,8 @@ interface CustomersTableProps {
 
 export function CustomersTable({ initialCustomers, userRole, onCustomerUpdated, onCustomerDeleted }: CustomersTableProps) {
   const { toast } = useToast();
-  const { user: actorUser } = useAuth(); // Get user for actorUserId
+  const { user: actorUser } = useAuth(); 
+  const { addMongoCommand } = useTechnicalMode(); // Use the hook
   const [customers, setCustomers] = useState<Customer[]>(initialCustomers);
   const [isDeleting, setIsDeleting] = useState<Record<string, boolean>>({});
   const [isPending, startTransition] = useTransition();
@@ -61,6 +63,10 @@ export function CustomersTable({ initialCustomers, userRole, onCustomerUpdated, 
       toast({ title: 'Error de autenticación', description: 'No se pudo identificar al usuario para la bitácora.', variant: 'destructive' });
       return;
     }
+
+    const simulatedCommand = `db.customers.deleteOne({ _id: ObjectId("${customerId}") }); // Cliente: ${customerName}`;
+    addMongoCommand(simulatedCommand);
+
     setIsDeleting(prev => ({ ...prev, [customerId]: true }));
     startTransition(async () => {
       const result = await deleteCustomerAction(customerId, customerName, actorUser.id);
@@ -186,3 +192,5 @@ export function CustomersTable({ initialCustomers, userRole, onCustomerUpdated, 
     </>
   );
 }
+
+    

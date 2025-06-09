@@ -33,11 +33,12 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { addNewInventoryItemAction, fetchSuppliersAction } from '@/lib/actions';
 import { NewInventoryItemClientSchema } from '@/lib/form-schemas';
-import type { NewInventoryItemFormValues, Supplier, UnitType } from '@/lib/types';
+import type { NewInventoryItemFormValues, Supplier, UnitType, InventoryItem } from '@/lib/types'; // Added InventoryItem
 import { Loader2, DollarSign } from 'lucide-react';
 import React, { useState, useEffect, useCallback } from 'react';
 import { CATEGORY_CODES, getCategoryNameByCodePrefix } from '@/lib/category-mapping';
 import { useAuth } from '@/contexts/auth-context'; 
+import { useTechnicalMode } from '@/contexts/technical-mode-context'; // Import useTechnicalMode
 
 const formSchema = NewInventoryItemClientSchema;
 
@@ -60,11 +61,13 @@ const DEFAULT_FORM_VALUES: NewInventoryItemFormValues = {
 interface AddInventoryItemDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onItemAdded: (item: InventoryItem) => void; // Callback prop
 }
 
-export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemDialogProps) {
+export function AddInventoryItemDialog({ open, onOpenChange, onItemAdded }: AddInventoryItemDialogProps) {
   const { toast } = useToast();
   const { user } = useAuth(); 
+  const { addMongoCommand } = useTechnicalMode(); // Use the hook
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [suppliersList, setSuppliersList] = useState<Supplier[]>([]);
   const [isLoadingSuppliers, setIsLoadingSuppliers] = useState(false);
@@ -125,6 +128,9 @@ export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemD
       setIsSubmitting(false);
       return;
     }
+
+    const simulatedCommand = `db.inventoryItems.insertOne({\n  code: "GENERATED_CODE (e.g., ${values.categoryCodePrefix}-${values.shelfCodePrefix.toUpperCase()}-XXXXX)",\n  name: "${values.name}",\n  quantity: ${values.quantity},\n  unitPrice: ${values.unitPrice},\n  stockMinimo: ${values.stockMinimo},\n  dailySales: ${values.dailySales},\n  category: "${getCategoryNameByCodePrefix(values.categoryCodePrefix) || values.category || ''}",\n  supplier: "${values.supplier || ''}",\n  unitType: "${values.unitType}",\n  unitName: "${values.unitName}",\n  lastUpdated: "CURRENT_TIMESTAMP"\n}); // Note: Actual code generation and sequential numbering happens server-side.`;
+    addMongoCommand(simulatedCommand);
     
     const result = await addNewInventoryItemAction(values, user.id);
     
@@ -133,6 +139,7 @@ export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemD
         title: 'Artículo Nuevo Añadido',
         description: `El artículo "${result.item.name}" (Código: ${result.item.code}) se ha añadido con ${result.item.quantity} ${result.item.unitName}(s).`,
       });
+      onItemAdded(result.item); 
       onOpenChange(false); 
     } else {
       let errorMessage = result.error || "Ocurrió un error desconocido.";
@@ -384,3 +391,5 @@ export function AddInventoryItemDialog({ open, onOpenChange }: AddInventoryItemD
     </Dialog>
   );
 }
+
+    

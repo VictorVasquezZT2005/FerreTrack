@@ -1,7 +1,7 @@
 
 import { MongoClient, ObjectId, type Collection, type Db, ServerApiVersion, ClientSession, TransactionOptions } from 'mongodb';
 import { getDb, clientPromise } from './mongodb'; // Import clientPromise
-import type { AuditLogEntry, InventoryItem, NewInventoryItemFormValues, UpdateStockFormValues, Supplier, User, LoginCredentials, EditInventoryItemFormValues, Customer, CustomerFormValues, Sale, SaleItem, PaymentMethod, UnitType } from './types';
+import type { AuditLogEntry, InventoryItem, NewInventoryItemFormValues, UpdateStockFormValues, Supplier, User, LoginCredentials, EditInventoryItemFormValues, Customer, CustomerFormValues, Sale, SaleItem, PaymentMethod, UnitType, SalesSummary, AdminCollectionDataParams, AllowedCollectionNames } from './types';
 // SellingUnit type is no longer used here after reversion.
 import { getCategoryNameByCodePrefix } from '@/lib/category-mapping';
 // import { v4 as uuidv4 } from 'uuid'; // No longer needed here
@@ -522,15 +522,16 @@ export async function addSale(
   };
 
   let resultSale: Sale | undefined;
-  console.log(`[addSale] Initiating transaction for user: ${saleData.userId}`);
+  console.log(`[Modo Técnico - MongoDB Transaction] addSale: Iniciando transacción para usuario: ${saleData.userId}`);
 
   try {
     await session.withTransaction(async (currentSession) => {
+      console.log('[Modo Técnico - MongoDB Transaction] session.startTransaction() (implícito por withTransaction)');
       if (!MONGODB_DB_NAME) {
         console.error("[addSale Transaction] CRITICAL: MONGODB_DB_NAME is not defined. Aborting transaction.");
         throw new Error("Configuración de base de datos incompleta en el servidor.");
       }
-      const db = mongoClient.db(MONGODB_DB_NAME); // Explicitly use MONGODB_DB_NAME
+      const db = mongoClient.db(MONGODB_DB_NAME); 
       console.log(`[addSale Transaction] Using database: ${db.databaseName}`);
       const inventoryCollection = db.collection<Omit<InventoryItem, 'id'> & { _id: ObjectId }>(INVENTORY_COLLECTION);
       const salesCollection = db.collection<Omit<Sale, 'id'>>(SALES_COLLECTION);
@@ -539,24 +540,21 @@ export async function addSale(
       console.log(`[addSale Transaction] Processing ${saleData.items.length} items.`);
       for (const saleItem of saleData.items) {
         const currentProductIdString = saleItem.productId; 
-        console.log(`[addSale Transaction] Processing saleItem: ${saleItem.productName}, RAW productId (string from client): "${currentProductIdString}" (length: ${currentProductIdString.length})`);
         
         let charCodes = '';
         for (let i = 0; i < currentProductIdString.length; i++) {
           charCodes += currentProductIdString.charCodeAt(i) + ' ';
         }
-        console.log(`[addSale Transaction] RAW productId char codes: [${charCodes.trim()}]`);
-
+        
         if (!ObjectId.isValid(currentProductIdString)) {
           console.error(`[addSale Transaction] Invalid ObjectId for productId: ${currentProductIdString} (product: ${saleItem.productName})`);
           throw new Error(`ID de producto inválido: "${currentProductIdString}" para "${saleItem.productName}".`);
         }
         
         const objectIdToSearch = new ObjectId(currentProductIdString);
-        console.log(`[addSale Transaction] Attempting to find product with _id (ObjectId): ${objectIdToSearch.toHexString()} in collection: ${inventoryCollection.collectionName} of DB: ${db.databaseName}`);
+        console.log(`[Modo Técnico - MongoDB Transaction] Verificando stock para producto ID ${objectIdToSearch.toHexString()}: db.inventoryItems.findOne({ _id: ObjectId("${objectIdToSearch.toHexString()}") })`);
         
         const product = await inventoryCollection.findOne({ _id: objectIdToSearch }, { session: currentSession });
-        console.log(`[addSale Transaction] Product find result for ID ${objectIdToSearch.toHexString()}: ${product ? 'FOUND' : 'NULL'}`);
         
         if (!product) {
           console.error(`[addSale Transaction] Product not found in collection '${INVENTORY_COLLECTION}' for _id: ${objectIdToSearch.toHexString()} (converted from string "${currentProductIdString}"). Product Name: ${saleItem.productName}`);
@@ -582,6 +580,7 @@ export async function addSale(
 
       const bulkStockUpdates = saleData.items.map(item => {
         const quantityToDeduct = item.quantitySold;
+        console.log(`[Modo Técnico - MongoDB Transaction] Actualizando stock para producto ID ${item.productId}: db.inventoryItems.updateOne({ _id: ObjectId("${item.productId}") }, { $inc: { quantity: ${-quantityToDeduct} } })`);
         return {
           updateOne: {
             filter: { _id: new ObjectId(item.productId), quantity: { $gte: quantityToDeduct } },
@@ -619,7 +618,7 @@ export async function addSale(
         lastUpdated: now,
       };
 
-      console.log(`[addSale Transaction] Attempting to insert sale: ${saleNumber}`);
+      console.log(`[Modo Técnico - MongoDB Transaction] Insertando venta: db.sales.insertOne({ saleNumber: "${saleNumber}", ... })`);
       const insertResult = await salesCollection.insertOne(newSaleToInsert as any, { session: currentSession });
       if (!insertResult.insertedId) {
         console.error(`[addSale Transaction] Failed to insert sale. No insertedId returned. Aborting transaction.`);
@@ -628,6 +627,7 @@ export async function addSale(
       console.log(`[addSale Transaction] Sale inserted successfully. DB ID: ${insertResult.insertedId}`);
       const insertedSaleWithId = { ...newSaleToInsert, _id: insertResult.insertedId };
       resultSale = mapMongoId(insertedSaleWithId);
+      console.log('[Modo Técnico - MongoDB Transaction] session.commitTransaction() (implícito por withTransaction exitoso)');
 
     }, transactionOptions); 
 
@@ -641,6 +641,7 @@ export async function addSale(
 
   } catch (e: any) {
     console.error("[addSale] Error during addSale (outer catch):", e.message, e.stack);
+    console.log('[Modo Técnico - MongoDB Transaction] session.abortTransaction() (implícito por error en withTransaction)');
     if (e.message.startsWith("Producto") || e.message.startsWith("ID de producto inválido") || e.message.startsWith("Stock insuficiente") || e.message.startsWith("No se pudo actualizar el stock")) {
         return { stockError: e.message };
     }
@@ -655,7 +656,7 @@ export async function addSale(
     return { error: `Error al procesar la venta: ${message}` };
   } finally {
     await session.endSession();
-    console.log("[addSale] Session ended.");
+    console.log("[Modo Técnico - MongoDB Transaction] addSale: Session ended.");
   }
 }
 
@@ -689,10 +690,12 @@ export async function deleteSaleAndRestoreStock(saleId: string): Promise<{ succe
     writeConcern: { w: 'majority' },
     maxCommitTimeMS: 30000
   };
+  console.log(`[Modo Técnico - MongoDB Transaction] deleteSaleAndRestoreStock: Iniciando transacción para anular venta ID: ${saleId}`);
 
   try {
     let operationSucceeded = false;
     await session.withTransaction(async (currentSession) => {
+      console.log('[Modo Técnico - MongoDB Transaction] session.startTransaction() (implícito por withTransaction)');
       if (!MONGODB_DB_NAME) {
         console.error("[deleteSaleAndRestoreStock Transaction] CRITICAL: MONGODB_DB_NAME is not defined. Aborting transaction.");
         throw new Error("Configuración de base de datos incompleta en el servidor.");
@@ -706,6 +709,7 @@ export async function deleteSaleAndRestoreStock(saleId: string): Promise<{ succe
       if (!saleToDelete) {
         throw new Error("Venta no encontrada.");
       }
+      console.log(`[Modo Técnico - MongoDB Transaction] Venta ${saleToDelete.saleNumber} encontrada para anulación.`);
 
       for (const item of saleToDelete.items) {
         if (!ObjectId.isValid(item.productId)) {
@@ -713,6 +717,7 @@ export async function deleteSaleAndRestoreStock(saleId: string): Promise<{ succe
           continue;
         }
         const quantityToRestore = item.quantitySold;
+        console.log(`[Modo Técnico - MongoDB Transaction] Restaurando stock para producto ID ${item.productId}: db.inventoryItems.updateOne({ _id: ObjectId("${item.productId}") }, { $inc: { quantity: ${quantityToRestore} } })`);
 
         const updateResult = await inventoryCollection.findOneAndUpdate(
           { _id: new ObjectId(item.productId) },
@@ -724,20 +729,24 @@ export async function deleteSaleAndRestoreStock(saleId: string): Promise<{ succe
         );
         if (!updateResult) {
           console.warn(`Producto con ID ${item.productId} no encontrado en inventario durante la restauración de stock para la venta ${saleId}.`);
+        } else {
+          console.log(`[Modo Técnico - MongoDB Transaction] Stock restaurado para ${updateResult.name}. Nuevo stock: ${updateResult.quantity}`);
         }
       }
-
+      console.log(`[Modo Técnico - MongoDB Transaction] Eliminando venta: db.sales.deleteOne({ _id: ObjectId("${saleId}") })`);
       const deleteResult = await salesCollection.deleteOne({ _id: new ObjectId(saleId) }, { session: currentSession });
       if (deleteResult.deletedCount !== 1) {
          throw new Error("No se pudo eliminar la venta de la base de datos.");
       }
       operationSucceeded = true;
+      console.log('[Modo Técnico - MongoDB Transaction] session.commitTransaction() (implícito por withTransaction exitoso)');
     }, transactionOptions);
 
     return { success: operationSucceeded };
 
   } catch (e: any) {
     console.error(`Error al eliminar la venta ${saleId} y restaurar stock:`, e);
+    console.log('[Modo Técnico - MongoDB Transaction] session.abortTransaction() (implícito por error en withTransaction)');
     if (e.message.startsWith("Configuración de base de datos incompleta")) {
         return { success: false, error: e.message };
     }
@@ -753,6 +762,7 @@ export async function deleteSaleAndRestoreStock(saleId: string): Promise<{ succe
     return { success: false, error: `Error del servidor: ${e.message}` };
   } finally {
     await session.endSession();
+    console.log("[Modo Técnico - MongoDB Transaction] deleteSaleAndRestoreStock: Session ended.");
   }
 }
 
@@ -801,3 +811,101 @@ export async function updateSaleDetails(
   return result ? mapMongoId(result) : null;
 }
 
+// --- Aggregation Functions ---
+export async function getSalesSummaryByMonth(): Promise<SalesSummary[]> {
+  const db = await getDb();
+  const salesCollection = db.collection<Omit<Sale, 'id'>>(SALES_COLLECTION);
+
+  const pipeline = [
+    {
+      $match: {
+        date: { $exists: true, $ne: null } // Asegurarse que la fecha existe
+      }
+    },
+    {
+      $addFields: {
+        convertedDate: { $toDate: "$date" } // Convertir string de fecha a objeto Date de BSON
+      }
+    },
+    {
+      $match: {
+        convertedDate: { $type: "date" } // Filtrar documentos donde la conversión fue exitosa
+      }
+    },
+    {
+      $group: {
+        _id: {
+          year: { $year: "$convertedDate" },
+          month: { $month: "$convertedDate" }
+        },
+        totalSalesAmount: { $sum: "$totalAmount" },
+        count: { $sum: 1 }
+      }
+    },
+    {
+      $sort: {
+        "_id.year": -1,
+        "_id.month": -1
+      }
+    },
+    {
+      $project: {
+        _id: 0, // Excluir el _id original del grupo
+        year: "$_id.year",
+        month: "$_id.month",
+        totalSalesAmount: 1,
+        numberOfSales: "$count"
+      }
+    }
+  ];
+
+  const summary = await salesCollection.aggregate(pipeline).toArray();
+  return summary as SalesSummary[];
+}
+
+// --- Admin Data Explorer Functions ---
+const ALLOWED_COLLECTIONS: AllowedCollectionNames[] = [
+  'inventoryItems', 'sales', 'users', 'customers', 'suppliers', 'auditLogs'
+];
+
+export async function getAdminCollectionData(
+  params: AdminCollectionDataParams
+): Promise<{ documents: any[]; totalDocuments: number }> {
+  const { collectionName, page = 1, limit = 10, filterById } = params;
+
+  if (!ALLOWED_COLLECTIONS.includes(collectionName as AllowedCollectionNames)) {
+    throw new Error(`Acceso a la colección '${collectionName}' no permitido.`);
+  }
+
+  const db = await getDb();
+  const collection = db.collection(collectionName);
+
+  let query: any = {};
+  if (filterById) {
+    if (!ObjectId.isValid(filterById)) {
+      throw new Error("El ID proporcionado para el filtro no es válido.");
+    }
+    query = { _id: new ObjectId(filterById) };
+  }
+
+  const skip = (page - 1) * limit;
+  
+  const documentsFromDb = await collection
+    .find(query)
+    .sort({ _id: -1 }) // Sort by _id descending by default, usually means newest first
+    .skip(skip)
+    .limit(limit)
+    .toArray();
+
+  const totalDocuments = await collection.countDocuments(query);
+  
+  // Map _id to id for client-side consistency
+  const documents = documentsFromDb.map(doc => {
+    if (doc._id) {
+      return mapMongoId(doc as { _id: ObjectId });
+    }
+    return doc;
+  });
+
+  return { documents, totalDocuments };
+}

@@ -29,6 +29,7 @@ import { SimulatedCardPaymentDialog } from '@/components/simulated-card-payment-
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import PageLoading from '@/app/loading';
 import { CreateSaleClientFormSchema, SaleItemClientFormSchema } from '@/lib/form-schemas';
+import { useTechnicalMode } from '@/contexts/technical-mode-context'; // Import useTechnicalMode
 
 const NO_CUSTOMER_SELECTED_VALUE = "__NO_CUSTOMER__";
 const INACTIVITY_TIMEOUT_DURATION = 1 * 60 * 1000; // 1 minute
@@ -36,6 +37,7 @@ const INACTIVITY_TIMEOUT_DURATION = 1 * 60 * 1000; // 1 minute
 export default function CreateSalePage() {
   const { toast } = useToast();
   const { user, isLoading: authLoading } = useAuth();
+  const { addMongoCommand } = useTechnicalMode(); // Use the hook
   const router = useRouter();
   const [isProcessingSale, startTransition] = useTransition();
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -69,11 +71,8 @@ export default function CreateSalePage() {
     name: 'items',
   });
 
-  // Inactivity timer and visual countdown logic
   useEffect(() => {
     if (isProcessingSale) {
-      // If processing sale, the effect's cleanup (from previous run)
-      // will have cleared timers. We return early to not start new ones.
       return;
     }
 
@@ -83,9 +82,7 @@ export default function CreateSalePage() {
     const resetFullTimerSystem = () => {
       clearTimeout(inactivityTimerId);
       clearInterval(countdownIntervalId);
-
       setRemainingTime(INACTIVITY_TIMEOUT_DURATION);
-
       inactivityTimerId = setTimeout(() => {
         toast({
           title: "Redirigido por Inactividad",
@@ -94,38 +91,23 @@ export default function CreateSalePage() {
         });
         router.push('/sales');
       }, INACTIVITY_TIMEOUT_DURATION);
-
       countdownIntervalId = setInterval(() => {
-        setRemainingTime(prevTime => {
-          if (prevTime <= 1000) { // Stop at or before 0
-            // clearInterval(countdownIntervalId); // Not strictly needed here as reset or unmount will clear
-            return 0;
-          }
-          return prevTime - 1000;
-        });
+        setRemainingTime(prevTime => Math.max(0, prevTime - 1000));
       }, 1000);
     };
 
-    const handleUserActivity = () => {
-      resetFullTimerSystem();
-    };
-
+    const handleUserActivity = () => resetFullTimerSystem();
     const activityEvents: (keyof DocumentEventMap)[] = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'];
     
-    resetFullTimerSystem(); // Start timers on mount or when isProcessingSale becomes false
-
-    activityEvents.forEach(event => {
-      document.addEventListener(event, handleUserActivity, true);
-    });
+    resetFullTimerSystem();
+    activityEvents.forEach(event => document.addEventListener(event, handleUserActivity, true));
 
     return () => {
       clearTimeout(inactivityTimerId);
       clearInterval(countdownIntervalId);
-      activityEvents.forEach(event => {
-        document.removeEventListener(event, handleUserActivity, true);
-      });
+      activityEvents.forEach(event => document.removeEventListener(event, handleUserActivity, true));
     };
-  }, [isProcessingSale, router, toast]); // Dependencies for the inactivity logic
+  }, [isProcessingSale, router, toast]);
 
 
   useEffect(() => {
@@ -137,6 +119,7 @@ export default function CreateSalePage() {
     if (!authLoading && user && (user.rol === 'admin' || user.rol === 'empleado')) {
       async function loadInitialData() {
         setIsLoadingData(true);
+        addMongoCommand('// Fetching initial data for new sale page:\ndb.customers.find({}).sort({ name: 1 });\ndb.inventoryItems.find({}).sort({ name: 1 });');
         try {
           const [fetchedCustomers, fetchedInventory] = await Promise.all([
             fetchCustomersAction(),
@@ -154,13 +137,12 @@ export default function CreateSalePage() {
     } else if (!authLoading && !user) {
         router.push('/login');
     }
-  }, [user, authLoading, router, toast]);
+  }, [user, authLoading, router, toast, addMongoCommand]);
 
   useEffect(() => {
     if (searchTerm.length > 0) {
       const normalizedSearchTerm = searchTerm.toLowerCase().trim();
       const nameMap = new Map<string, string>(); 
-
       allInventoryItems
         .filter(item =>
           item.name.toLowerCase().trim().includes(normalizedSearchTerm) ||
@@ -275,6 +257,14 @@ export default function CreateSalePage() {
       customerId: saleData.customerId === NO_CUSTOMER_SELECTED_VALUE ? undefined : saleData.customerId,
     };
 
+    let simulatedCommand = "// Simulating transaction for new sale:\nsession.startTransaction();\n";
+    saleDataToSubmit.items.forEach(item => {
+        simulatedCommand += `db.inventoryItems.updateOne({ _id: ObjectId("${item.inventoryItemId}") }, { $inc: { quantity: -${item.quantityToSell} } }); // For ${item.productName}\n`;
+    });
+    simulatedCommand += `db.sales.insertOne({\n  date: "CURRENT_TIMESTAMP",\n  customerId: "${saleDataToSubmit.customerId || 'N/A'}",\n  customerName: "CUSTOMER_NAME_LOOKUP",\n  items: ${JSON.stringify(saleDataToSubmit.items.map(i => ({productId: i.inventoryItemId, productName: i.productName, quantitySold: i.quantityToSell, priceAtSale: i.unitPrice, subtotal: i.unitPrice * parseFloat(i.quantityToSell)})))},\n  totalAmount: ${totalAmount.toFixed(2)},\n  paymentMethod: "${saleDataToSubmit.paymentMethod}",\n  userId: "${user.id}",\n  sellerName: "${user.nombre}"\n  // saleNumber and lastUpdated generated server-side\n});\n`;
+    simulatedCommand += "session.commitTransaction(); // Assuming success";
+    addMongoCommand(simulatedCommand);
+
     startTransition(async () => {
       const result = await createSaleAction(user.id, saleDataToSubmit);
       if (result.success && result.sale) {
@@ -295,12 +285,14 @@ export default function CreateSalePage() {
           description: result.stockError,
           variant: 'destructive',
         });
+        addMongoCommand(`// Sale transaction aborted due to stock error: ${result.stockError}\nsession.abortTransaction();`);
       } else {
         toast({
           title: 'Error al Crear Venta',
           description: result.error || "Ocurrió un error desconocido.",
           variant: 'destructive',
         });
+        addMongoCommand(`// Sale transaction aborted due to server error: ${result.error}\nsession.abortTransaction();`);
       }
     });
   };
@@ -666,3 +658,4 @@ export default function CreateSalePage() {
   );
 }
 
+    

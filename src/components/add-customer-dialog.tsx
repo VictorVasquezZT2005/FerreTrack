@@ -29,7 +29,8 @@ import { CustomerClientSchema } from '@/lib/form-schemas';
 import type { CustomerFormValues, Customer } from '@/lib/types';
 import { Loader2 } from 'lucide-react';
 import React, { useState, useTransition } from 'react';
-import { useAuth } from '@/contexts/auth-context'; // Added useAuth
+import { useAuth } from '@/contexts/auth-context'; 
+import { useTechnicalMode } from '@/contexts/technical-mode-context'; // Import useTechnicalMode
 
 interface AddCustomerDialogProps {
   open: boolean;
@@ -41,7 +42,8 @@ const formSchema = CustomerClientSchema.omit({ id: true });
 
 export function AddCustomerDialog({ open, onOpenChange, onCustomerAdded }: AddCustomerDialogProps) {
   const { toast } = useToast();
-  const { user } = useAuth(); // Get user for actorUserId
+  const { user } = useAuth(); 
+  const { addMongoCommand } = useTechnicalMode(); // Use the hook
   const [isPending, startTransition] = useTransition();
 
   const form = useForm<Omit<CustomerFormValues, 'id'>>({
@@ -62,11 +64,15 @@ export function AddCustomerDialog({ open, onOpenChange, onCustomerAdded }: AddCu
   }, [open, form]);
 
   async function onSubmit(values: Omit<CustomerFormValues, 'id'>) {
+    if (!user?.id) {
+      toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario para la bitácora.", variant: "destructive" });
+      return;
+    }
+
+    const simulatedCommand = `db.customers.insertOne({\n  name: "${values.name}",\n  email: "${values.email || ''}",\n  phone: "${values.phone || ''}",\n  address: "${values.address || ''}",\n  ruc: "${values.ruc || ''}",\n  registrationDate: "CURRENT_TIMESTAMP",\n  lastUpdated: "CURRENT_TIMESTAMP"\n});`;
+    addMongoCommand(simulatedCommand);
+
     startTransition(async () => {
-      if (!user?.id) {
-        toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario para la bitácora.", variant: "destructive" });
-        return;
-      }
       const result = await addNewCustomerAction(values, user.id);
       if (result.success && result.customer) {
         toast({
@@ -180,3 +186,5 @@ export function AddCustomerDialog({ open, onOpenChange, onCustomerAdded }: AddCu
     </Dialog>
   );
 }
+
+    

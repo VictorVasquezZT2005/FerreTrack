@@ -34,7 +34,8 @@ import type { User, UserFormValues } from '@/lib/types';
 import { UserFormClientSchema } from '@/lib/form-schemas';
 import { Loader2 } from 'lucide-react';
 import React, { useEffect, useTransition } from 'react';
-import { useAuth } from '@/contexts/auth-context'; // Added useAuth
+import { useAuth } from '@/contexts/auth-context'; 
+import { useTechnicalMode } from '@/contexts/technical-mode-context'; // Import useTechnicalMode
 
 const formSchema = UserFormClientSchema;
 
@@ -42,27 +43,22 @@ interface EditUserDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   user: Omit<User, 'password' | 'lastUpdated'>; 
+  onUserUpdated: (updatedUser: Omit<User, 'password'>) => void; 
 }
 
-export function EditUserDialog({ open, onOpenChange, user: userToEdit }: EditUserDialogProps) {
+export function EditUserDialog({ open, onOpenChange, user: userToEdit, onUserUpdated }: EditUserDialogProps) {
   const { toast } = useToast();
-  const { user: actorUser } = useAuth(); // Get acting user for actorUserId
+  const { user: actorUser } = useAuth(); 
+  const { addMongoCommand } = useTechnicalMode(); // Use the hook
   const [isPending, startTransition] = useTransition();
 
   const form = useForm<UserFormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: {
-      id: userToEdit.id,
-      nombre: userToEdit.nombre,
-      email: userToEdit.email,
-      rol: userToEdit.rol,
-      password: '',
-      confirmPassword: '',
-    },
+    // Default values set by useEffect
   });
 
   useEffect(() => {
-    if (userToEdit && open) { // Ensure form resets only when dialog opens with new user data
+    if (userToEdit && open) { 
       form.reset({
         id: userToEdit.id,
         nombre: userToEdit.nombre,
@@ -85,10 +81,26 @@ export function EditUserDialog({ open, onOpenChange, user: userToEdit }: EditUse
     }
 
     const dataToSubmit: UserFormValues = { ...values };
+    let passwordChanged = false;
     if (!dataToSubmit.password) {
       delete dataToSubmit.password;
       delete dataToSubmit.confirmPassword;
+    } else {
+      passwordChanged = true;
     }
+
+    const updatePayload: any = {
+      nombre: values.nombre,
+      email: values.email,
+      rol: values.rol,
+      lastUpdated: "CURRENT_TIMESTAMP"
+    };
+    if (passwordChanged) {
+      updatePayload.password = "HASHED_PASSWORD";
+    }
+
+    const simulatedCommand = `db.users.updateOne(\n  { _id: ObjectId("${values.id}") },\n  { $set: ${JSON.stringify(updatePayload, null, 2)} }\n);`;
+    addMongoCommand(simulatedCommand);
 
     startTransition(async () => {
       const result = await updateUserAction(values.id!, dataToSubmit, actorUser.id);
@@ -98,6 +110,7 @@ export function EditUserDialog({ open, onOpenChange, user: userToEdit }: EditUse
           title: 'Usuario Actualizado',
           description: `El usuario ${result.user.nombre} se ha actualizado correctamente.`,
         });
+        onUserUpdated(result.user); 
         onOpenChange(false);
       } else {
         let errorMessage = result.error || "Ocurrió un error desconocido.";
@@ -218,3 +231,5 @@ export function EditUserDialog({ open, onOpenChange, user: userToEdit }: EditUse
     </Dialog>
   );
 }
+
+    

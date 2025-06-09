@@ -28,7 +28,8 @@ import type { Supplier, SupplierFormValues } from '@/lib/types';
 import { SupplierClientSchema } from '@/lib/form-schemas';
 import { Loader2 } from 'lucide-react';
 import React, { useEffect, useTransition } from 'react';
-import { useAuth } from '@/contexts/auth-context'; // Added useAuth
+import { useAuth } from '@/contexts/auth-context'; 
+import { useTechnicalMode } from '@/contexts/technical-mode-context'; // Import useTechnicalMode
 
 const formSchema = SupplierClientSchema.omit({id: true}); 
 
@@ -36,26 +37,22 @@ interface EditSupplierDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   supplier: Supplier; 
+  onSupplierUpdated: (updatedSupplier: Supplier) => void; 
 }
 
-export function EditSupplierDialog({ open, onOpenChange, supplier }: EditSupplierDialogProps) {
+export function EditSupplierDialog({ open, onOpenChange, supplier, onSupplierUpdated }: EditSupplierDialogProps) {
   const { toast } = useToast();
-  const { user } = useAuth(); // Get user for actorUserId
+  const { user } = useAuth(); 
+  const { addMongoCommand } = useTechnicalMode(); // Use the hook
   const [isPending, startTransition] = useTransition();
 
   const form = useForm<SupplierFormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: {
-      name: supplier.name,
-      telefono: supplier.telefono || '',
-      email: supplier.email || '',
-      contacto: supplier.contacto || '',
-      productos_suministrados_string: supplier.productos_suministrados?.join(', ') || '',
-    },
+    // Default values will be set by useEffect
   });
 
   useEffect(() => {
-    if (supplier) {
+    if (supplier && open) { 
       form.reset({
         name: supplier.name,
         telefono: supplier.telefono || '',
@@ -67,11 +64,31 @@ export function EditSupplierDialog({ open, onOpenChange, supplier }: EditSupplie
   }, [supplier, form, open]);
 
   async function onSubmit(values: SupplierFormValues) {
+    if (!user?.id) {
+      toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario para la bitácora.", variant: "destructive" });
+      return;
+    }
+
+    const updateFields: any = {};
+    if (values.name !== supplier.name) updateFields.name = values.name;
+    if (values.telefono !== supplier.telefono) updateFields.telefono = values.telefono || '';
+    if (values.email !== supplier.email) updateFields.email = values.email || '';
+    if (values.contacto !== supplier.contacto) updateFields.contacto = values.contacto || '';
+    const newProductsArray = values.productos_suministrados_string
+      ? values.productos_suministrados_string.split(',').map(p => p.trim()).filter(p => p)
+      : [];
+    if (JSON.stringify(newProductsArray) !== JSON.stringify(supplier.productos_suministrados || [])) {
+        updateFields.productos_suministrados = newProductsArray;
+    }
+
+    if (Object.keys(updateFields).length > 0) {
+        updateFields.lastUpdated = "CURRENT_TIMESTAMP";
+    }
+    
+    const simulatedCommand = `db.suppliers.updateOne(\n  { _id: ObjectId("${supplier.id}") },\n  { $set: ${JSON.stringify(updateFields, null, 2)} }\n);`;
+    addMongoCommand(simulatedCommand);
+
     startTransition(async () => {
-      if (!user?.id) {
-        toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario para la bitácora.", variant: "destructive" });
-        return;
-      }
       const result = await updateSupplierAction(supplier.id, values, user.id);
 
       if (result.success && result.supplier) {
@@ -79,6 +96,7 @@ export function EditSupplierDialog({ open, onOpenChange, supplier }: EditSupplie
           title: 'Proveedor Actualizado',
           description: `El proveedor ${result.supplier.name} se ha actualizado correctamente.`,
         });
+        onSupplierUpdated(result.supplier); 
         onOpenChange(false);
       } else {
         let errorMessage = result.error || "Ocurrió un error desconocido.";
@@ -190,3 +208,5 @@ export function EditSupplierDialog({ open, onOpenChange, supplier }: EditSupplie
     </Dialog>
   );
 }
+
+    

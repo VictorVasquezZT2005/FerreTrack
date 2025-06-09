@@ -31,7 +31,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { EditSaleDialog } from './edit-sale-dialog'; 
-import { useAuth } from '@/contexts/auth-context'; // Added useAuth
+import { useAuth } from '@/contexts/auth-context'; 
+import { useTechnicalMode } from '@/contexts/technical-mode-context'; // Import useTechnicalMode
 
 interface SalesTableProps {
   sales: Sale[];
@@ -42,7 +43,8 @@ interface SalesTableProps {
 
 export function SalesTable({ sales, userRole, onSaleDeleted, onSaleUpdated }: SalesTableProps) {
   const { toast } = useToast();
-  const { user: actorUser } = useAuth(); // Get user for actorUserId
+  const { user: actorUser } = useAuth(); 
+  const { addMongoCommand } = useTechnicalMode(); // Use the hook
   const [isDeleting, setIsDeleting] = useState<Record<string, boolean>>({});
   const [isPending, startTransition] = useTransition();
   const isAdmin = userRole === 'admin';
@@ -55,7 +57,7 @@ export function SalesTable({ sales, userRole, onSaleDeleted, onSaleUpdated }: Sa
     return <p className="text-muted-foreground text-center py-8">Aún no hay ventas registradas.</p>;
   }
 
-  const handleDeleteSale = async (saleId: string, saleNumber: string) => {
+  const handleDeleteSale = async (saleId: string, saleNumber: string, items: Sale['items']) => {
     if (!isAdmin) {
       toast({ title: 'Acción no permitida', description: 'No tienes permisos para eliminar ventas.', variant: 'destructive' });
       return;
@@ -64,6 +66,15 @@ export function SalesTable({ sales, userRole, onSaleDeleted, onSaleUpdated }: Sa
       toast({ title: 'Error de autenticación', description: 'No se pudo identificar al usuario para la bitácora.', variant: 'destructive' });
       return;
     }
+
+    let simulatedCommand = `// Simulating transaction for deleting sale ${saleNumber} and restoring stock:\nsession.startTransaction();\n`;
+    items.forEach(item => {
+        simulatedCommand += `db.inventoryItems.updateOne({ _id: ObjectId("${item.productId}") }, { $inc: { quantity: ${item.quantitySold} } }); // Restoring stock for ${item.productName}\n`;
+    });
+    simulatedCommand += `db.sales.deleteOne({ _id: ObjectId("${saleId}") });\n`;
+    simulatedCommand += "session.commitTransaction(); // Assuming success";
+    addMongoCommand(simulatedCommand);
+
     setIsDeleting(prev => ({ ...prev, [saleId]: true }));
     startTransition(async () => {
       const result = await deleteSaleAction(saleId, saleNumber, actorUser.id);
@@ -81,6 +92,7 @@ export function SalesTable({ sales, userRole, onSaleDeleted, onSaleUpdated }: Sa
           description: result.error || 'Ocurrió un error desconocido.',
           variant: 'destructive',
         });
+        addMongoCommand(`// Deleting sale ${saleNumber} transaction aborted due to error: ${result.error}\nsession.abortTransaction();`);
       }
     });
   };
@@ -172,7 +184,7 @@ export function SalesTable({ sales, userRole, onSaleDeleted, onSaleUpdated }: Sa
                       <AlertDialogFooter>
                         <AlertDialogCancel disabled={isDeleting[sale.id] || isPending}>Cancelar</AlertDialogCancel>
                         <AlertDialogAction
-                          onClick={() => handleDeleteSale(sale.id, sale.saleNumber)}
+                          onClick={() => handleDeleteSale(sale.id, sale.saleNumber, sale.items)}
                           disabled={isDeleting[sale.id] || isPending}
                           className="bg-destructive hover:bg-destructive/90"
                         >
@@ -200,3 +212,5 @@ export function SalesTable({ sales, userRole, onSaleDeleted, onSaleUpdated }: Sa
     </>
   );
 }
+
+    

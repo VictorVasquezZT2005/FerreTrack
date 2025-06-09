@@ -30,22 +30,25 @@ import {
 } from "@/components/ui/select";
 import { useToast } from '@/hooks/use-toast';
 import { addNewUserAction } from '@/lib/actions';
-import type { UserFormValues } from '@/lib/types';
+import type { UserFormValues, User } from '@/lib/types'; // Added User
 import { UserFormClientSchema } from '@/lib/form-schemas';
 import { Loader2 } from 'lucide-react';
 import { useState, useTransition } from 'react';
-import { useAuth } from '@/contexts/auth-context'; // Added useAuth
+import { useAuth } from '@/contexts/auth-context'; 
+import { useTechnicalMode } from '@/contexts/technical-mode-context'; // Import useTechnicalMode
 
 const formSchema = UserFormClientSchema;
 
 interface AddUserDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onUserAdded: (newUser: Omit<User, 'password'>) => void; 
 }
 
-export function AddUserDialog({ open, onOpenChange }: AddUserDialogProps) {
+export function AddUserDialog({ open, onOpenChange, onUserAdded }: AddUserDialogProps) {
   const { toast } = useToast();
-  const { user: actorUser } = useAuth(); // Get acting user for actorUserId
+  const { user: actorUser } = useAuth(); 
+  const { addMongoCommand } = useTechnicalMode(); // Use the hook
   const [isPending, startTransition] = useTransition();
 
   const form = useForm<UserFormValues>({
@@ -53,18 +56,22 @@ export function AddUserDialog({ open, onOpenChange }: AddUserDialogProps) {
     defaultValues: {
       nombre: '',
       email: '',
-      rol: 'empleado', // Default role
+      rol: 'empleado', 
       password: '',
       confirmPassword: '',
     },
   });
 
   async function onSubmit(values: UserFormValues) {
+    if (!actorUser?.id) {
+      toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario que realiza la acción.", variant: "destructive" });
+      return;
+    }
+
+    const simulatedCommand = `db.users.insertOne({\n  nombre: "${values.nombre}",\n  email: "${values.email}",\n  rol: "${values.rol}",\n  password: "HASHED_PASSWORD",\n  lastUpdated: "CURRENT_TIMESTAMP"\n});`;
+    addMongoCommand(simulatedCommand);
+
     startTransition(async () => {
-      if (!actorUser?.id) {
-        toast({ title: "Error de autenticación", description: "No se pudo identificar al usuario que realiza la acción.", variant: "destructive" });
-        return;
-      }
       const result = await addNewUserAction(values, actorUser.id);
 
       if (result.success && result.user) {
@@ -72,6 +79,7 @@ export function AddUserDialog({ open, onOpenChange }: AddUserDialogProps) {
           title: 'Usuario Añadido',
           description: `El usuario ${result.user.nombre} se ha añadido correctamente.`,
         });
+        onUserAdded(result.user); 
         form.reset();
         onOpenChange(false);
       } else {
@@ -200,3 +208,5 @@ export function AddUserDialog({ open, onOpenChange }: AddUserDialogProps) {
     </Dialog>
   );
 }
+
+    
