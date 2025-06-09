@@ -47,8 +47,8 @@ export function TrendAnalysisCard({ analysisResult }: TrendAnalysisCardProps) {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {analysisResult.stockoutPredictions.map((prediction) => (
-                      <TableRow key={prediction.item}>
+                    {analysisResult.stockoutPredictions.map((prediction, index) => (
+                      <TableRow key={`${prediction.item}-${index}`}>
                         <TableCell className="font-medium">{prediction.item}</TableCell>
                         <TableCell className={`text-center font-semibold ${prediction.daysUntilStockout <= 7 ? 'text-destructive' : 'text-foreground'}`}>
                           {prediction.daysUntilStockout}
@@ -71,3 +71,4 @@ export function TrendAnalysisCard({ analysisResult }: TrendAnalysisCardProps) {
     </Card>
   );
 }
+

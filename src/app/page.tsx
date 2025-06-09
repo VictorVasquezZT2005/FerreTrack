@@ -3,76 +3,86 @@
 import { useAuth } from '@/contexts/auth-context';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
-import { Package, Users, Truck, History as SalesHistoryIcon, Edit3, ShieldCheck } from 'lucide-react'; // Renamed History to SalesHistoryIcon
+import { Package, Users, Truck, History as SalesHistoryIcon, Edit3, ShieldCheck, HelpCircle } from 'lucide-react'; // Renamed History to SalesHistoryIcon, added HelpCircle
 import Link from 'next/link';
+import React, { useState } from 'react'; // Added useState
+import { AiGuideDialog } from '@/components/ai-guide-dialog'; // Added AiGuideDialog import
 
 export default function DashboardPage() {
   const { user } = useAuth();
+  const [isHelpDialogOpen, setIsHelpDialogOpen] = useState(false);
 
   return (
-    <div className="space-y-8">
-      <div className="p-6 rounded-lg shadow-md bg-card">
-        <div className="flex flex-col md:flex-row items-center gap-6">
-          <div>
-            <h1 className="text-4xl font-bold text-primary">¡Bienvenido a FerreTrack, {user?.nombre}!</h1>
-            <p className="text-lg text-muted-foreground mt-2">
-              Tu panel de control central para una gestión eficiente de tu ferretería.
-            </p>
+    <>
+      <div className="space-y-8">
+        <div className="p-6 rounded-lg shadow-md bg-card">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+            <div>
+              <h1 className="text-4xl font-bold text-primary">¡Bienvenido a FerreTrack, {user?.nombre}!</h1>
+              <p className="text-lg text-muted-foreground mt-2">
+                Tu panel de control central para una gestión eficiente de tu ferretería.
+              </p>
+            </div>
+            <Button variant="outline" size="lg" onClick={() => setIsHelpDialogOpen(true)}>
+              <HelpCircle className="mr-2 h-5 w-5" />
+              Ayuda IA / Tour
+            </Button>
           </div>
         </div>
-      </div>
 
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        <DashboardCard
-          title="Inventario"
-          description="Gestiona tus productos y existencias."
-          icon={<Package className="h-8 w-8 text-primary" />}
-          href="/inventory"
-          userRole={user?.rol}
-          allowedRoles={['admin', 'empleado', 'inventory_manager']}
-        />
-        <DashboardCard
-          title="Clientes"
-          description="Administra la información de tus clientes."
-          icon={<Users className="h-8 w-8 text-primary" />}
-          href="/customers"
-          userRole={user?.rol}
-          allowedRoles={['admin', 'empleado']}
-        />
-        <DashboardCard
-          title="Ventas"
-          description="Consulta el registro de todas las ventas."
-          icon={<SalesHistoryIcon className="h-8 w-8 text-primary" />}
-          href="/sales"
-          userRole={user?.rol}
-          allowedRoles={['admin', 'empleado']}
-        />
-        <DashboardCard
-          title="Proveedores"
-          description="Administra la información de tus proveedores."
-          icon={<Truck className="h-8 w-8 text-primary" />}
-          href="/suppliers"
-          userRole={user?.rol}
-          allowedRoles={['admin', 'empleado', 'inventory_manager']}
-        />
-        <DashboardCard
-          title="Usuarios del Sistema"
-          description="Gestiona los usuarios del sistema."
-          icon={<Users className="h-8 w-8 text-primary" />}
-          href="/users"
-          userRole={user?.rol}
-          allowedRoles={['admin']}
-        />
-        <DashboardCard
-          title="Bitácora de Auditoría"
-          description="Revisa los registros de actividad del sistema."
-          icon={<ShieldCheck className="h-8 w-8 text-primary" />}
-          href="/audit-log"
-          userRole={user?.rol}
-          allowedRoles={['admin']}
-        />
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <DashboardCard
+            title="Inventario"
+            description="Gestiona tus productos y existencias."
+            icon={<Package className="h-8 w-8 text-primary" />}
+            href="/inventory"
+            userRole={user?.rol}
+            allowedRoles={['admin', 'empleado', 'inventory_manager']}
+          />
+          <DashboardCard
+            title="Clientes"
+            description="Administra la información de tus clientes."
+            icon={<Users className="h-8 w-8 text-primary" />}
+            href="/customers"
+            userRole={user?.rol}
+            allowedRoles={['admin', 'empleado']}
+          />
+          <DashboardCard
+            title="Ventas"
+            description="Consulta el registro de todas las ventas."
+            icon={<SalesHistoryIcon className="h-8 w-8 text-primary" />}
+            href="/sales"
+            userRole={user?.rol}
+            allowedRoles={['admin', 'empleado']}
+          />
+          <DashboardCard
+            title="Proveedores"
+            description="Administra la información de tus proveedores."
+            icon={<Truck className="h-8 w-8 text-primary" />}
+            href="/suppliers"
+            userRole={user?.rol}
+            allowedRoles={['admin', 'empleado', 'inventory_manager']}
+          />
+          <DashboardCard
+            title="Usuarios del Sistema"
+            description="Gestiona los usuarios del sistema."
+            icon={<Users className="h-8 w-8 text-primary" />}
+            href="/users"
+            userRole={user?.rol}
+            allowedRoles={['admin']}
+          />
+          <DashboardCard
+            title="Bitácora de Auditoría"
+            description="Revisa los registros de actividad del sistema."
+            icon={<ShieldCheck className="h-8 w-8 text-primary" />}
+            href="/audit-log"
+            userRole={user?.rol}
+            allowedRoles={['admin']}
+          />
+        </div>
       </div>
-    </div>
+      <AiGuideDialog open={isHelpDialogOpen} onOpenChange={setIsHelpDialogOpen} />
+    </>
   );
 }
 

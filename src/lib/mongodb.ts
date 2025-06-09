@@ -19,7 +19,7 @@ if (!MONGODB_DB_NAME) {
 }
 
 let client: MongoClient;
-let clientPromise: Promise<MongoClient>;
+export let clientPromise: Promise<MongoClient>; // Export clientPromise
 
 // Aligning options with the MongoDB Atlas example
 const options = {
@@ -96,4 +96,5 @@ export async function getDb(): Promise<Db> {
   }
 }
 
-export default clientPromise;
+// Default export is removed as we now export clientPromise directly
+// export default clientPromise;

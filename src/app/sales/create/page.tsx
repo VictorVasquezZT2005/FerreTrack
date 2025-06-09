@@ -1,7 +1,7 @@
 
 'use client';
 
-import React, { useState, useEffect, useTransition } from 'react';
+import React, { useState, useEffect, useTransition, useCallback } from 'react';
 import { useForm, useFieldArray, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -21,7 +21,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useToast } from '@/hooks/use-toast';
 import { fetchCustomersAction, fetchInventoryItemsForSaleAction, createSaleAction } from '@/lib/actions';
 import type { Customer, InventoryItem, CreateSaleFormValues, PaymentMethod } from '@/lib/types';
-import { Loader2, PlusCircle, Trash2, ShoppingCart, UserCircleIcon, Search, CreditCard, Landmark, ShieldAlert, PackageSearch,ChevronDown } from 'lucide-react';
+import { Loader2, PlusCircle, Trash2, ShoppingCart, UserCircleIcon, Search, CreditCard, Landmark, ShieldAlert, PackageSearch, ChevronDown, Timer } from 'lucide-react'; // Added Timer icon
 import { useAuth } from '@/contexts/auth-context';
 import { useRouter } from 'next/navigation';
 import { FormItem } from '@/components/ui/form';
@@ -31,6 +31,7 @@ import PageLoading from '@/app/loading';
 import { CreateSaleClientFormSchema, SaleItemClientFormSchema } from '@/lib/form-schemas';
 
 const NO_CUSTOMER_SELECTED_VALUE = "__NO_CUSTOMER__";
+const INACTIVITY_TIMEOUT_DURATION = 1 * 60 * 1000; // 1 minute
 
 export default function CreateSalePage() {
   const { toast } = useToast();
@@ -52,6 +53,8 @@ export default function CreateSalePage() {
   const [isCardPaymentDialogOpen, setIsCardPaymentDialogOpen] = useState(false);
   const [pendingSaleData, setPendingSaleData] = useState<CreateSaleFormValues | null>(null);
 
+  const [remainingTime, setRemainingTime] = useState(INACTIVITY_TIMEOUT_DURATION);
+
   const form = useForm<CreateSaleFormValues>({
     resolver: zodResolver(CreateSaleClientFormSchema),
     defaultValues: {
@@ -65,6 +68,65 @@ export default function CreateSalePage() {
     control: form.control,
     name: 'items',
   });
+
+  // Inactivity timer and visual countdown logic
+  useEffect(() => {
+    if (isProcessingSale) {
+      // If processing sale, the effect's cleanup (from previous run)
+      // will have cleared timers. We return early to not start new ones.
+      return;
+    }
+
+    let inactivityTimerId: NodeJS.Timeout;
+    let countdownIntervalId: NodeJS.Timeout;
+
+    const resetFullTimerSystem = () => {
+      clearTimeout(inactivityTimerId);
+      clearInterval(countdownIntervalId);
+
+      setRemainingTime(INACTIVITY_TIMEOUT_DURATION);
+
+      inactivityTimerId = setTimeout(() => {
+        toast({
+          title: "Redirigido por Inactividad",
+          description: "Has sido redirigido al historial de ventas debido a inactividad.",
+          variant: "default",
+        });
+        router.push('/sales');
+      }, INACTIVITY_TIMEOUT_DURATION);
+
+      countdownIntervalId = setInterval(() => {
+        setRemainingTime(prevTime => {
+          if (prevTime <= 1000) { // Stop at or before 0
+            // clearInterval(countdownIntervalId); // Not strictly needed here as reset or unmount will clear
+            return 0;
+          }
+          return prevTime - 1000;
+        });
+      }, 1000);
+    };
+
+    const handleUserActivity = () => {
+      resetFullTimerSystem();
+    };
+
+    const activityEvents: (keyof DocumentEventMap)[] = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'];
+    
+    resetFullTimerSystem(); // Start timers on mount or when isProcessingSale becomes false
+
+    activityEvents.forEach(event => {
+      document.addEventListener(event, handleUserActivity, true);
+    });
+
+    return () => {
+      clearTimeout(inactivityTimerId);
+      clearInterval(countdownIntervalId);
+      activityEvents.forEach(event => {
+        document.removeEventListener(event, handleUserActivity, true);
+      });
+    };
+  }, [isProcessingSale, router, toast]); // Dependencies for the inactivity logic
+
 
   useEffect(() => {
     if (!authLoading && user && user.rol === 'inventory_manager') {
@@ -97,17 +159,17 @@ export default function CreateSalePage() {
   useEffect(() => {
     if (searchTerm.length > 0) {
       const normalizedSearchTerm = searchTerm.toLowerCase().trim();
-      const nameMap = new Map<string, string>(); // Map: normalizedName -> originalName
+      const nameMap = new Map<string, string>(); 
 
       allInventoryItems
         .filter(item =>
           item.name.toLowerCase().trim().includes(normalizedSearchTerm) ||
-          item.code.toLowerCase().includes(normalizedSearchTerm) // Assuming code doesn't need trim for search
+          item.code.toLowerCase().includes(normalizedSearchTerm) 
         )
         .forEach(item => {
           const normalizedItemName = item.name.toLowerCase().trim();
           if (!nameMap.has(normalizedItemName)) {
-            nameMap.set(normalizedItemName, item.name); // Store the first encountered original casing
+            nameMap.set(normalizedItemName, item.name); 
           }
         });
       setFilteredConceptualProductNames(Array.from(nameMap.values()));
@@ -266,6 +328,14 @@ export default function CreateSalePage() {
 
   const currentSelectedItemForDisplay = getSelectedInventoryItemForForm();
 
+  const formatTime = (ms: number) => {
+    if (ms < 0) ms = 0;
+    const totalSeconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  };
+
 
   if (authLoading || isLoadingData) {
     return <PageLoading />;
@@ -295,6 +365,12 @@ export default function CreateSalePage() {
             <CardTitle className="text-3xl font-bold">Registrar Nueva Venta</CardTitle>
           </div>
           <CardDescription>Complete los detalles para registrar una nueva venta.</CardDescription>
+          {!isProcessingSale && (
+            <div className="mt-2 text-sm text-muted-foreground flex items-center justify-center md:justify-start border-t pt-3">
+              <Timer className="h-4 w-4 mr-1.5" />
+              <span>Cierre por inactividad en: {formatTime(remainingTime)}</span>
+            </div>
+          )}
         </CardHeader>
 
         <form onSubmit={form.handleSubmit(onSubmit)}>
@@ -589,3 +665,4 @@ export default function CreateSalePage() {
     </>
   );
 }
+

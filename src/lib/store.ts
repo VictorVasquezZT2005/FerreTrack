@@ -1,6 +1,6 @@
 
-import { MongoClient, ObjectId, type Collection, type Db, ServerApiVersion } from 'mongodb';
-import { getDb } from './mongodb';
+import { MongoClient, ObjectId, type Collection, type Db, ServerApiVersion, ClientSession, TransactionOptions } from 'mongodb';
+import { getDb, clientPromise } from './mongodb'; // Import clientPromise
 import type { AuditLogEntry, InventoryItem, NewInventoryItemFormValues, UpdateStockFormValues, Supplier, User, LoginCredentials, EditInventoryItemFormValues, Customer, CustomerFormValues, Sale, SaleItem, PaymentMethod, UnitType } from './types';
 // SellingUnit type is no longer used here after reversion.
 import { getCategoryNameByCodePrefix } from '@/lib/category-mapping';
@@ -11,8 +11,9 @@ const INVENTORY_COLLECTION = 'inventoryItems';
 const SUPPLIERS_COLLECTION = 'suppliers';
 const USERS_COLLECTION = 'users';
 const CUSTOMERS_COLLECTION = 'customers';
-const SALES_COLLECTION = 'sales'; 
-const AUDIT_LOG_COLLECTION = 'auditLogs'; 
+const SALES_COLLECTION = 'sales';
+const AUDIT_LOG_COLLECTION = 'auditLogs';
+const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME; // Ensure MONGODB_DB_NAME is available
 
 // Helper function to convert MongoDB document to application type
 function mapMongoId<T extends { _id?: ObjectId }>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -39,7 +40,7 @@ export async function addAuditLogInternal(logEntry: Omit<AuditLogEntry, 'id'>): 
 export async function getAuditLogs(): Promise<AuditLogEntry[]> {
   const db = await getDb();
   const collection = db.collection<Omit<AuditLogEntry, 'id'>>(AUDIT_LOG_COLLECTION);
-  const logsFromDb = await collection.find().sort({ timestamp: -1 }).limit(100).toArray(); 
+  const logsFromDb = await collection.find().sort({ timestamp: -1 }).limit(100).toArray();
   return logsFromDb.map(log => mapMongoId(log as Omit<AuditLogEntry, 'id'> & { _id: ObjectId }));
 }
 
@@ -86,11 +87,11 @@ export async function getInventoryItemById(itemId: string): Promise<InventoryIte
 export async function generateNextItemCodeForPrefix(db: Db, categoryPrefix: string, shelfPrefix: string): Promise<string> {
   const collection = db.collection<Omit<InventoryItem, 'id'>>(INVENTORY_COLLECTION);
   const escapedCategoryPrefix = categoryPrefix.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-  const escapedShelfPrefix = shelfPrefix.toUpperCase().replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'); 
+  const escapedShelfPrefix = shelfPrefix.toUpperCase().replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
   const codePrefixPattern = `^${escapedCategoryPrefix}-${escapedShelfPrefix}-`;
 
   const itemsWithPrefix = await collection.find({ code: { $regex: codePrefixPattern } }).sort({ code: -1 }).limit(1).toArray();
-  
+
   let maxSequentialNumber = 0;
   if (itemsWithPrefix.length > 0) {
     const lastItemCode = itemsWithPrefix[0].code;
@@ -108,16 +109,16 @@ export async function generateNextItemCodeForPrefix(db: Db, categoryPrefix: stri
 
 
 export async function addInventoryItem(
-  itemData: Omit<NewInventoryItemFormValues, 'category' | 'code'> & { 
-    categoryCodePrefix: string; 
+  itemData: Omit<NewInventoryItemFormValues, 'category' | 'code'> & {
+    categoryCodePrefix: string;
     shelfCodePrefix: string;
   }
 ): Promise<{ item?: InventoryItem, error?: string }> {
   const db = await getDb();
-  
+
   const categoryNameToSave = getCategoryNameByCodePrefix(itemData.categoryCodePrefix);
   const shelfCodePrefixNormalized = itemData.shelfCodePrefix.toUpperCase();
-  
+
   let fullCode = "";
   try {
     fullCode = await generateNextItemCodeForPrefix(db, itemData.categoryCodePrefix, shelfCodePrefixNormalized);
@@ -125,7 +126,7 @@ export async function addInventoryItem(
     console.error("Error al generar código de artículo:", e);
     return { error: "Error al generar el código del artículo. Verifique los prefijos." };
   }
-  
+
   const existingItemByFullCode = await db.collection(INVENTORY_COLLECTION).findOne({ code: fullCode });
   if (existingItemByFullCode) {
     return { error: `Un artículo con el código "${fullCode}" ya existe. Esto es inesperado si la generación secuencial funciona.` };
@@ -146,7 +147,7 @@ export async function addInventoryItem(
   };
 
   const collection = db.collection<Omit<InventoryItem, 'id'>>(INVENTORY_COLLECTION);
-  const result = await collection.insertOne(newItemToInsert as any); 
+  const result = await collection.insertOne(newItemToInsert as any);
   if (result.insertedId) {
     const insertedItemWithId = { ...newItemToInsert, _id: result.insertedId };
     return { item: mapMongoId(insertedItemWithId) };
@@ -171,7 +172,7 @@ export async function updateInventoryItemDetails(
   if (itemData.supplier !== undefined) updatePayload.supplier = itemData.supplier;
   if (itemData.unitType !== undefined) updatePayload.unitType = itemData.unitType;
   if (itemData.unitName !== undefined) updatePayload.unitName = itemData.unitName;
-  
+
   if (Object.keys(updatePayload).length === 0) {
     const currentItem = await collection.findOne({ _id: new ObjectId(itemId) });
     return currentItem ? mapMongoId(currentItem) : null;
@@ -194,7 +195,7 @@ export async function increaseItemQuantityByCode(code: string, quantityToAdd: nu
   const result = await collection.findOneAndUpdate(
     { code: code },
     {
-      $inc: { quantity: quantityToAdd }, 
+      $inc: { quantity: quantityToAdd },
       $set: { lastUpdated: new Date().toISOString() }
     },
     { returnDocument: 'after' }
@@ -211,7 +212,7 @@ export async function increaseItemQuantityById(itemId: string, quantityToAdd: nu
   const result = await collection.findOneAndUpdate(
     { _id: new ObjectId(itemId) },
     {
-      $inc: { quantity: quantityToAdd }, 
+      $inc: { quantity: quantityToAdd },
       $set: { lastUpdated: new Date().toISOString() }
     },
     { returnDocument: 'after' }
@@ -229,7 +230,7 @@ export async function updateItemQuantity(itemId: string, newQuantity: number): P
     { _id: new ObjectId(itemId) },
     {
       $set: {
-        quantity: newQuantity, 
+        quantity: newQuantity,
         lastUpdated: new Date().toISOString()
       }
     },
@@ -261,7 +262,7 @@ export async function addSupplier(supplierData: Omit<Supplier, 'id' | 'lastUpdat
     ...supplierData,
     lastUpdated: new Date().toISOString(),
   };
-  const result = await collection.insertOne(newSupplierToInsert as any); 
+  const result = await collection.insertOne(newSupplierToInsert as any);
   const insertedSupplierWithId = { ...newSupplierToInsert, _id: result.insertedId };
   return mapMongoId(insertedSupplierWithId);
 }
@@ -341,7 +342,7 @@ export async function addUser(userData: Omit<User, 'id' | 'lastUpdated'>): Promi
     ...userData,
     lastUpdated: new Date().toISOString(),
   };
-  const result = await collection.insertOne(newUserToInsert as any); 
+  const result = await collection.insertOne(newUserToInsert as any);
   const { password, ...userWithoutPassword } = mapMongoId({...newUserToInsert, _id: result.insertedId } as User & { _id: ObjectId });
   return { user: userWithoutPassword };
 }
@@ -352,14 +353,14 @@ export async function updateUser(userId: string, userData: Partial<Omit<User, 'i
   const collection = db.collection<User>(USERS_COLLECTION);
 
   const updateData: any = { ...userData };
-  delete updateData.id; 
+  delete updateData.id;
 
   if (userData.password && userData.password.trim() !== '') {
-    updateData.password = userData.password; 
+    updateData.password = userData.password;
   } else {
-    delete updateData.password; 
+    delete updateData.password;
   }
-  
+
   if (Object.keys(updateData).length === 0 && !userData.password) {
     const currentUserDoc = await collection.findOne({ _id: new ObjectId(userId) });
     if (currentUserDoc) {
@@ -373,10 +374,10 @@ export async function updateUser(userId: string, userData: Partial<Omit<User, 'i
     const queryOr: any[] = [];
     if (updateData.email) queryOr.push({ email: updateData.email });
     if (updateData.nombre) queryOr.push({ nombre: { $regex: `^${updateData.nombre}$`, $options: 'i' } });
-    
+
     if (queryOr.length > 0) {
         const existingUser = await collection.findOne({
-        _id: { $ne: new ObjectId(userId) }, 
+        _id: { $ne: new ObjectId(userId) },
         $or: queryOr
         });
         if (existingUser) {
@@ -384,7 +385,7 @@ export async function updateUser(userId: string, userData: Partial<Omit<User, 'i
         }
     }
   }
-  
+
   updateData.lastUpdated = new Date().toISOString();
 
   const result = await collection.findOneAndUpdate(
@@ -412,12 +413,12 @@ export async function deleteUser(userId: string): Promise<boolean> {
 export async function authenticateUser(credentials: LoginCredentials): Promise<Omit<User, 'password'> | null> {
   const db = await getDb();
   const collection = db.collection<User>(USERS_COLLECTION);
-  
+
   const query: any = {
-    nombre: { $regex: `^${credentials.nombre}$`, $options: 'i' }, 
-    password: credentials.password 
+    nombre: { $regex: `^${credentials.nombre}$`, $options: 'i' },
+    password: credentials.password
   };
-  
+
   try {
     const userDoc = await collection.findOne(query);
     if (userDoc) {
@@ -427,7 +428,7 @@ export async function authenticateUser(credentials: LoginCredentials): Promise<O
       return null;
     }
   } catch (error: any) {
-    throw error; 
+    throw error;
   }
 }
 
@@ -442,7 +443,7 @@ export async function getCustomers(): Promise<Customer[]> {
 export async function addCustomer(customerData: CustomerFormValues): Promise<Customer> {
   const db = await getDb();
   const collection = db.collection<Omit<Customer, 'id'>>(CUSTOMERS_COLLECTION);
-  
+
   const now = new Date().toISOString();
   const newCustomerToInsert: Omit<Customer, 'id'> = {
     name: customerData.name,
@@ -465,11 +466,11 @@ export async function updateCustomer(customerId: string, customerData: CustomerF
 
   const updatePayload: Partial<Omit<Customer, 'id' | 'registrationDate' | 'lastUpdated'>> = {};
   if (customerData.name) updatePayload.name = customerData.name;
-  if (customerData.email !== undefined) updatePayload.email = customerData.email || undefined; 
+  if (customerData.email !== undefined) updatePayload.email = customerData.email || undefined;
   if (customerData.phone !== undefined) updatePayload.phone = customerData.phone || undefined;
   if (customerData.address !== undefined) updatePayload.address = customerData.address || undefined;
   if (customerData.ruc !== undefined) updatePayload.ruc = customerData.ruc || undefined;
-  
+
   if (Object.keys(updatePayload).length === 0) {
      const currentCustomer = await collection.findOne({ _id: new ObjectId(customerId) });
      return currentCustomer ? mapMongoId(currentCustomer) : null;
@@ -494,9 +495,9 @@ export async function deleteCustomer(customerId: string): Promise<boolean> {
 }
 
 // --- Sales Functions ---
-export async function generateNextSaleNumber(db: Db): Promise<string> {
+export async function generateNextSaleNumber(db: Db, session?: ClientSession): Promise<string> {
   const salesCollection = db.collection<Omit<Sale, 'id'>>(SALES_COLLECTION);
-  const lastSale = await salesCollection.find().sort({ saleNumber: -1 }).limit(1).toArray();
+  const lastSale = await salesCollection.find({}, { session }).sort({ saleNumber: -1 }).limit(1).toArray();
   let nextNumber = 1;
   if (lastSale.length > 0 && lastSale[0].saleNumber) {
     const lastNumStr = lastSale[0].saleNumber.replace(/^V/i, '');
@@ -511,92 +512,150 @@ export async function generateNextSaleNumber(db: Db): Promise<string> {
 export async function addSale(
   saleData: Omit<Sale, 'id' | 'saleNumber' | 'lastUpdated' | 'sellerName'> & { userId: string }
 ): Promise<{ sale?: Sale; error?: string; stockError?: string }> {
-  const db = await getDb();
-  const inventoryCollection = db.collection<Omit<InventoryItem, 'id'> & { _id: ObjectId }>(INVENTORY_COLLECTION);
-  const salesCollection = db.collection<Omit<Sale, 'id'>>(SALES_COLLECTION);
+  const mongoClient = await clientPromise;
+  const session = mongoClient.startSession();
 
-  // --- Stock Validation ---
-  for (const saleItem of saleData.items) {
-    if (!ObjectId.isValid(saleItem.productId)) {
-       return { stockError: `ID de producto inválido: "${saleItem.productId}" para "${saleItem.productName}".` };
-    }
-    const product = await inventoryCollection.findOne({ _id: new ObjectId(saleItem.productId) });
-    if (!product) {
-      return { stockError: `Producto "${saleItem.productName}" (ID: ${saleItem.productId}) no encontrado.` };
-    }
-    // For single unit model, conversionToBaseAtSale is effectively 1
-    const quantityInBaseUnitsToDeduct = saleItem.quantitySold; // * 1 (implicit)
+  const transactionOptions: TransactionOptions = {
+    readConcern: { level: 'snapshot' },
+    writeConcern: { w: 'majority' },
+    maxCommitTimeMS: 30000 
+  };
 
-    if (product.quantity < quantityInBaseUnitsToDeduct) {
-      return { stockError: `Stock insuficiente para "${product.name}" (en ${product.unitName}). Disponible: ${product.quantity.toFixed(2)}, Solicitado: ${quantityInBaseUnitsToDeduct.toFixed(2)}.` };
-    }
-  }
-  // --- End Stock Validation ---
-
-  let sellerName = 'Usuario Desconocido';
-  if (ObjectId.isValid(saleData.userId)) { // saleData.userId is the actorUserId
-    const seller = await getUserById(saleData.userId); 
-    if (seller) {
-      sellerName = seller.nombre;
-    }
-  }
-  
-  const bulkStockUpdates = saleData.items.map(item => {
-    const quantityToDeduct = item.quantitySold; // No conversion factor needed for single unit model
-    return {
-      updateOne: {
-        filter: { _id: new ObjectId(item.productId) },
-        update: { 
-          $inc: { quantity: -quantityToDeduct }, 
-          $set: { lastUpdated: new Date().toISOString() }
-        },
-      },
-    }
-  });
+  let resultSale: Sale | undefined;
+  console.log(`[addSale] Initiating transaction for user: ${saleData.userId}`);
 
   try {
-    if (bulkStockUpdates.length > 0) {
-      await inventoryCollection.bulkWrite(bulkStockUpdates as any); 
-    }
+    await session.withTransaction(async (currentSession) => {
+      if (!MONGODB_DB_NAME) {
+        console.error("[addSale Transaction] CRITICAL: MONGODB_DB_NAME is not defined. Aborting transaction.");
+        throw new Error("Configuración de base de datos incompleta en el servidor.");
+      }
+      const db = mongoClient.db(MONGODB_DB_NAME); // Explicitly use MONGODB_DB_NAME
+      console.log(`[addSale Transaction] Using database: ${db.databaseName}`);
+      const inventoryCollection = db.collection<Omit<InventoryItem, 'id'> & { _id: ObjectId }>(INVENTORY_COLLECTION);
+      const salesCollection = db.collection<Omit<Sale, 'id'>>(SALES_COLLECTION);
+      const usersCollection = db.collection<User>(USERS_COLLECTION);
 
-    const saleNumber = await generateNextSaleNumber(db);
-    const now = new Date().toISOString();
-    const newSaleToInsert: Omit<Sale, 'id'> = {
-      date: saleData.date || now, 
-      customerId: saleData.customerId,
-      customerName: saleData.customerName,
-      items: saleData.items,
-      totalAmount: saleData.totalAmount,
-      paymentMethod: saleData.paymentMethod,
-      userId: saleData.userId,
-      sellerName, 
-      saleNumber,
-      lastUpdated: now,
-    };
-
-    const result = await salesCollection.insertOne(newSaleToInsert as any);
-    if (result.insertedId) {
-      const insertedSaleWithId = { ...newSaleToInsert, _id: result.insertedId };
-      return { sale: mapMongoId(insertedSaleWithId) };
-    } else {
-      console.error("Error en dbAddSale: No se obtuvo insertedId de MongoDB después de insertOne.");
-      return { error: "Error crítico: No se pudo confirmar el guardado de la venta en la base de datos." };
-    }
-  } catch (e: any) {
-    console.error("Error durante dbAddSale (catch):", e);
-    // Attempt to revert stock updates if sale insertion fails
-    console.warn("Intentando revertir actualizaciones de stock debido a error en la creación de la venta...");
-    for (const saleItem of saleData.items) {
-        if (ObjectId.isValid(saleItem.productId)) {
-            const quantityToRestore = saleItem.quantitySold;
-            await inventoryCollection.updateOne(
-                { _id: new ObjectId(saleItem.productId) },
-                { $inc: { quantity: quantityToRestore } }
-            );
+      console.log(`[addSale Transaction] Processing ${saleData.items.length} items.`);
+      for (const saleItem of saleData.items) {
+        const currentProductIdString = saleItem.productId; 
+        console.log(`[addSale Transaction] Processing saleItem: ${saleItem.productName}, RAW productId (string from client): "${currentProductIdString}" (length: ${currentProductIdString.length})`);
+        
+        let charCodes = '';
+        for (let i = 0; i < currentProductIdString.length; i++) {
+          charCodes += currentProductIdString.charCodeAt(i) + ' ';
         }
+        console.log(`[addSale Transaction] RAW productId char codes: [${charCodes.trim()}]`);
+
+        if (!ObjectId.isValid(currentProductIdString)) {
+          console.error(`[addSale Transaction] Invalid ObjectId for productId: ${currentProductIdString} (product: ${saleItem.productName})`);
+          throw new Error(`ID de producto inválido: "${currentProductIdString}" para "${saleItem.productName}".`);
+        }
+        
+        const objectIdToSearch = new ObjectId(currentProductIdString);
+        console.log(`[addSale Transaction] Attempting to find product with _id (ObjectId): ${objectIdToSearch.toHexString()} in collection: ${inventoryCollection.collectionName} of DB: ${db.databaseName}`);
+        
+        const product = await inventoryCollection.findOne({ _id: objectIdToSearch }, { session: currentSession });
+        console.log(`[addSale Transaction] Product find result for ID ${objectIdToSearch.toHexString()}: ${product ? 'FOUND' : 'NULL'}`);
+        
+        if (!product) {
+          console.error(`[addSale Transaction] Product not found in collection '${INVENTORY_COLLECTION}' for _id: ${objectIdToSearch.toHexString()} (converted from string "${currentProductIdString}"). Product Name: ${saleItem.productName}`);
+          throw new Error(`Producto "${saleItem.productName}" (ID: ${currentProductIdString}) no encontrado.`);
+        }
+        console.log(`[addSale Transaction] Found product: ${product.name}, current stock: ${product.quantity}`);
+
+        const quantityInBaseUnitsToDeduct = saleItem.quantitySold;
+        if (product.quantity < quantityInBaseUnitsToDeduct) {
+          console.error(`[addSale Transaction] Insufficient stock for product: ${product.name} (ID: ${currentProductIdString}). Available: ${product.quantity}, Requested: ${quantityInBaseUnitsToDeduct}`);
+          throw new Error(`Stock insuficiente para "${product.name}" (en ${product.unitName}). Disponible: ${product.quantity.toFixed(2)}, Solicitado: ${quantityInBaseUnitsToDeduct.toFixed(2)}.`);
+        }
+      }
+
+      let sellerName = 'Usuario Desconocido';
+      if (ObjectId.isValid(saleData.userId)) {
+        const sellerDoc = await usersCollection.findOne({ _id: new ObjectId(saleData.userId) }, { session: currentSession });
+        if (sellerDoc) {
+          sellerName = sellerDoc.nombre;
+        }
+      }
+      console.log(`[addSale Transaction] Seller name determined: ${sellerName}`);
+
+      const bulkStockUpdates = saleData.items.map(item => {
+        const quantityToDeduct = item.quantitySold;
+        return {
+          updateOne: {
+            filter: { _id: new ObjectId(item.productId), quantity: { $gte: quantityToDeduct } },
+            update: {
+              $inc: { quantity: -quantityToDeduct },
+              $set: { lastUpdated: new Date().toISOString() }
+            },
+          },
+        };
+      });
+
+      if (bulkStockUpdates.length > 0) {
+        console.log(`[addSale Transaction] Performing bulk stock update for ${bulkStockUpdates.length} items.`);
+        const bulkResult = await inventoryCollection.bulkWrite(bulkStockUpdates as any, { session: currentSession });
+        if (bulkResult.matchedCount !== bulkStockUpdates.length || bulkResult.modifiedCount !== bulkStockUpdates.length) {
+          console.warn(`[addSale Transaction] Stock update issue during bulkWrite. Matched: ${bulkResult.matchedCount}, Modified: ${bulkResult.modifiedCount}, Expected: ${bulkStockUpdates.length}. Aborting transaction.`);
+          throw new Error("No se pudo actualizar el stock para todos los artículos. La cantidad podría haber cambiado. Intente de nuevo.");
+        }
+        console.log(`[addSale Transaction] Bulk stock update successful. Matched: ${bulkResult.matchedCount}, Modified: ${bulkResult.modifiedCount}`);
+      }
+
+      const saleNumber = await generateNextSaleNumber(db, currentSession);
+      console.log(`[addSale Transaction] Generated sale number: ${saleNumber}`);
+      const now = new Date().toISOString();
+      const newSaleToInsert: Omit<Sale, 'id'> = {
+        date: saleData.date || now,
+        customerId: saleData.customerId,
+        customerName: saleData.customerName,
+        items: saleData.items,
+        totalAmount: saleData.totalAmount,
+        paymentMethod: saleData.paymentMethod,
+        userId: saleData.userId,
+        sellerName,
+        saleNumber,
+        lastUpdated: now,
+      };
+
+      console.log(`[addSale Transaction] Attempting to insert sale: ${saleNumber}`);
+      const insertResult = await salesCollection.insertOne(newSaleToInsert as any, { session: currentSession });
+      if (!insertResult.insertedId) {
+        console.error(`[addSale Transaction] Failed to insert sale. No insertedId returned. Aborting transaction.`);
+        throw new Error("Error crítico: No se pudo confirmar el guardado de la venta en la base de datos durante la transacción.");
+      }
+      console.log(`[addSale Transaction] Sale inserted successfully. DB ID: ${insertResult.insertedId}`);
+      const insertedSaleWithId = { ...newSaleToInsert, _id: insertResult.insertedId };
+      resultSale = mapMongoId(insertedSaleWithId);
+
+    }, transactionOptions); 
+
+    if (resultSale) {
+        console.log(`[addSale] Transaction committed successfully for sale: ${resultSale.saleNumber}`);
+        return { sale: resultSale };
+    } else {
+        console.error("[addSale] Transaction completed but resultSale is undefined. This should not happen if withTransaction didn't throw.");
+        return { error: "La transacción de venta se completó, pero no se pudo obtener el resultado final de la venta. Revise la base de datos." };
     }
-    const message = e.message || "Se produjo un error interno del servidor durante el procesamiento de la base de datos para la venta.";
-    return { error: `Error al procesar la venta: ${message}. Se intentó revertir el stock.` };
+
+  } catch (e: any) {
+    console.error("[addSale] Error during addSale (outer catch):", e.message, e.stack);
+    if (e.message.startsWith("Producto") || e.message.startsWith("ID de producto inválido") || e.message.startsWith("Stock insuficiente") || e.message.startsWith("No se pudo actualizar el stock")) {
+        return { stockError: e.message };
+    }
+    if (e.message.startsWith("Configuración de base de datos incompleta")) {
+        return { error: e.message };
+    }
+    if (e.name === 'MongoExpiredSessionError' || (e.name === 'MongoTransactionError' && e.hasErrorLabel('TransientTransactionError')) || e.message.includes('MaxTimeMSExpired')) {
+        console.error(`[addSale] Transaction timed out (maxCommitTimeMS: ${transactionOptions.maxCommitTimeMS}ms).`);
+        return { error: `La operación de venta excedió el tiempo límite (${(transactionOptions.maxCommitTimeMS || 0)/1000}s) y fue cancelada. Por favor, inténtalo de nuevo.` };
+    }
+    const message = e.message || "Se produjo un error interno del servidor al procesar la venta.";
+    return { error: `Error al procesar la venta: ${message}` };
+  } finally {
+    await session.endSession();
+    console.log("[addSale] Session ended.");
   }
 }
 
@@ -622,46 +681,78 @@ export async function deleteSaleAndRestoreStock(saleId: string): Promise<{ succe
   if (!ObjectId.isValid(saleId)) {
     return { success: false, error: "ID de venta inválido." };
   }
-  const db = await getDb();
-  const salesCollection = db.collection<Omit<Sale, 'id'> & { _id: ObjectId }>(SALES_COLLECTION);
-  const inventoryCollection = db.collection<Omit<InventoryItem, 'id'> & { _id: ObjectId }>(INVENTORY_COLLECTION);
 
-  const saleToDelete = await salesCollection.findOne({ _id: new ObjectId(saleId) });
-
-  if (!saleToDelete) {
-    return { success: false, error: "Venta no encontrada." };
-  }
+  const mongoClient = await clientPromise;
+  const session = mongoClient.startSession();
+  const transactionOptions: TransactionOptions = {
+    readConcern: { level: 'snapshot' },
+    writeConcern: { w: 'majority' },
+    maxCommitTimeMS: 30000
+  };
 
   try {
-    for (const item of saleToDelete.items) {
-      if (!ObjectId.isValid(item.productId)) {
-        console.warn(`Skipping stock restoration for invalid productId: ${item.productId} in sale ${saleId}`);
-        continue;
+    let operationSucceeded = false;
+    await session.withTransaction(async (currentSession) => {
+      if (!MONGODB_DB_NAME) {
+        console.error("[deleteSaleAndRestoreStock Transaction] CRITICAL: MONGODB_DB_NAME is not defined. Aborting transaction.");
+        throw new Error("Configuración de base de datos incompleta en el servidor.");
       }
-      const quantityToRestore = item.quantitySold; // No conversion factor for single unit model
+      const db = mongoClient.db(MONGODB_DB_NAME);
+      const salesCollection = db.collection<Omit<Sale, 'id'> & { _id: ObjectId }>(SALES_COLLECTION);
+      const inventoryCollection = db.collection<Omit<InventoryItem, 'id'> & { _id: ObjectId }>(INVENTORY_COLLECTION);
 
-      const updateResult = await inventoryCollection.findOneAndUpdate(
-        { _id: new ObjectId(item.productId) },
-        {
-          $inc: { quantity: quantityToRestore }, 
-          $set: { lastUpdated: new Date().toISOString() }
-        },
-        { returnDocument: 'after' }
-      );
-      if (!updateResult) {
-        console.warn(`Producto con ID ${item.productId} no encontrado en inventario durante la restauración de stock para la venta ${saleId}.`);
+      const saleToDelete = await salesCollection.findOne({ _id: new ObjectId(saleId) }, { session: currentSession });
+
+      if (!saleToDelete) {
+        throw new Error("Venta no encontrada.");
       }
-    }
 
-    const deleteResult = await salesCollection.deleteOne({ _id: new ObjectId(saleId) });
-    if (deleteResult.deletedCount === 1) {
-      return { success: true };
-    } else {
-      return { success: false, error: "No se pudo eliminar la venta de la base de datos." };
-    }
+      for (const item of saleToDelete.items) {
+        if (!ObjectId.isValid(item.productId)) {
+          console.warn(`Skipping stock restoration for invalid productId: ${item.productId} in sale ${saleId}`);
+          continue;
+        }
+        const quantityToRestore = item.quantitySold;
+
+        const updateResult = await inventoryCollection.findOneAndUpdate(
+          { _id: new ObjectId(item.productId) },
+          {
+            $inc: { quantity: quantityToRestore },
+            $set: { lastUpdated: new Date().toISOString() }
+          },
+          { session: currentSession, returnDocument: 'after' }
+        );
+        if (!updateResult) {
+          console.warn(`Producto con ID ${item.productId} no encontrado en inventario durante la restauración de stock para la venta ${saleId}.`);
+        }
+      }
+
+      const deleteResult = await salesCollection.deleteOne({ _id: new ObjectId(saleId) }, { session: currentSession });
+      if (deleteResult.deletedCount !== 1) {
+         throw new Error("No se pudo eliminar la venta de la base de datos.");
+      }
+      operationSucceeded = true;
+    }, transactionOptions);
+
+    return { success: operationSucceeded };
+
   } catch (e: any) {
     console.error(`Error al eliminar la venta ${saleId} y restaurar stock:`, e);
+    if (e.message.startsWith("Configuración de base de datos incompleta")) {
+        return { success: false, error: e.message };
+    }
+    if (e.name === 'MongoExpiredSessionError' || e.name === 'MongoTransactionError' && e.hasErrorLabel('TransientTransactionError') || e.message.includes('MaxTimeMSExpired')) {
+        return { success: false, error: `La operación de eliminación excedió el tiempo límite (${(transactionOptions.maxCommitTimeMS || 0)/1000}s) y fue cancelada.` };
+    }
+    if (e.message === "Venta no encontrada.") {
+        return { success: false, error: e.message };
+    }
+    if (e.message === "No se pudo eliminar la venta de la base de datos.") {
+        return { success: false, error: e.message };
+    }
     return { success: false, error: `Error del servidor: ${e.message}` };
+  } finally {
+    await session.endSession();
   }
 }
 
@@ -683,17 +774,17 @@ export async function updateSaleDetails(
   if (data.paymentMethod) {
     updatePayload.paymentMethod = data.paymentMethod;
   }
-  
-  if (data.customerId === undefined && data.hasOwnProperty('customerId')) { 
+
+  if (data.customerId === undefined && data.hasOwnProperty('customerId')) {
     updatePayload.customerId = undefined;
     updatePayload.customerName = undefined;
-  } else if (data.customerId) { 
+  } else if (data.customerId) {
     updatePayload.customerId = data.customerId;
-    if (data.customerName) { 
+    if (data.customerName) {
          updatePayload.customerName = data.customerName;
     }
   }
-  
+
   const numKeysToUpdate = Object.keys(updatePayload).length;
   if (numKeysToUpdate === 1 && updatePayload.lastUpdated) {
      const currentSale = await salesCollection.findOne({_id: new ObjectId(saleId)});
